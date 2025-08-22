@@ -1,37 +1,26 @@
-# clyde
+## Clyde
+Clyde is a high-peprformance peer-to-peer (P2P) data acceleration engine designed  designed for rapid, large-scale delivery across heterogeneous compute environments. Currently, it specializes in fast container image distribution across nodes in a clusters. We are expanding its capabilities to support general content delivery, including AI model weights, datasets, and remote repository content (e.g., Git LFS, Hugging Face, pip, etc.). Clyde integrates with Apull to enable lazy loading of images.
 
-#### 介绍
-Clyde is a high-performance data acceleration engine designed for rapid, large-scale delivery across heterogeneous compute environments.
+## Architecture
+![Clyde Architecture](./docs/img/clyde-design.png "Clyde Architecture")
 
-#### 软件架构
-软件架构说明
+See more in the [design and architecture](./docs/design.md) guide.
+## Main Features
 
+1. **Design Simplicity:** Clyde uses a simplified stateless design making it performant and easy to extend
+2. **Speed:** Data is cached locally on nodes and transmitted through the P2P network to enable faster delivery accross the cluster
+3. **Saving:** Save bandwidth by serving content locally instead
+4. **Varsatile:** Avoids rate-limitting and Works even when the external sources is down
+4. **Lazy Loading:** Suppoprts lazy loading which significantly reduces container startup
 
-#### 安装教程
+## Design & Architecture
+Follow the [design and architecture](./docs/design.md) to understand the design and architecture of Clyde.
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+## Build and Instal
+Follow the building and installation instruction see [build](./docs/build.md) and [guide](./docs/install.md) respectively to get started
 
-#### 使用说明
+## Contribution
+Read [contribution guidelines](./docs/contributing.md) for instructions on how to build and test Spegel.
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
-
-#### 参与贡献
-
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
-
-
-#### 特技
-
-1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
-2.  Gitee 官方博客 [blog.gitee.com](https://blog.gitee.com)
-3.  你可以 [https://gitee.com/explore](https://gitee.com/explore) 这个地址来了解 Gitee 上的优秀开源项目
-4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
-5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
-6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+## Acknowledgement
+Many thanks to the developers of [Spegel](https://github.com/spegel-org/spegel) especialy Philip.
