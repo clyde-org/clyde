@@ -1,0 +1,11 @@
+apiVersion: v2
+name: clyde
+description: Stateless cluster local OCI registry mirror.
+type: application
+version: v15.0 # this is for helm, e.g. change this if you change chart logic. For remote helm you can use helm --version flag to overide this.
+appVersion: v464.0 # tag of the image in repository, update this when the tag change or you can update the tag values.yaml in image.tag
+annotations:
+  artifacthub.io/category: "integration-delivery"
+  artifacthub.io/license: "MIT"
+  artifacthub.io/operator: "false"
+  artifacthub.io/prerelease: "false"
