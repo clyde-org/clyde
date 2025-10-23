@@ -1,0 +1,23 @@
+clyde:
+  containerdContentPath: "/data/var/lib/containerd/io.containerd.content.v1.content"
+  debugWebEnabled: true
+
+serviceMonitor:
+  # -- If true creates a Prometheus Service Monitor.
+  enabled: true
+  interval: 15s
+  scrapeTimeout: 15s
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+
+grafanaDashboard:
+  # -- If true creates a Grafana dashboard.
+  enabled: true
+
+pip:
+  # -- this is where pip data such as .whl or tar.gz files will be stored                         
+  pipCacheDir: "/data/cache/pip/wheel"
+
+hf:
+  hfCacheDir: "/data/cache/hf/model"

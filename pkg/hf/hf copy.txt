@@ -1,0 +1,771 @@
+package hf
+
+import (
+	"clyde/pkg/mux"
+	"clyde/pkg/routing"
+	"context"
+	"crypto/tls"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/go-logr/logr"
+)
+
+type HFClient struct {
+	Log            logr.Logger
+	HFCacheDir     string
+	Router         routing.Router
+	Client         *http.Client
+	ResolveTimeout time.Duration
+	ResolveRetries int
+}
+
+// HFConfig holds constructor settings for HFClient
+type HFConfig struct {
+	Router         routing.Router
+	HFCacheDir     string
+	ResolveTimeout time.Duration
+	ResolveRetries int
+	Log            logr.Logger
+	Client         *http.Client
+}
+
+// Option type for functional configuration
+type HFOption func(*HFConfig)
+
+// WithHFLogger overrides the default logger
+func WithHFLogger(log logr.Logger) HFOption {
+	return func(cfg *HFConfig) {
+		cfg.Log = log
+	}
+}
+
+// WithHFTimeout sets the resolve timeout
+func WithHFTimeout(d time.Duration) HFOption {
+	return func(cfg *HFConfig) {
+		cfg.ResolveTimeout = d
+	}
+}
+
+// WithHFRetries sets the resolve retries
+func WithHFRetries(n int) HFOption {
+	return func(cfg *HFConfig) {
+		cfg.ResolveRetries = n
+	}
+}
+
+// WithHFHTTPClient replaces the default HTTP client
+func WithHFHTTPClient(client *http.Client) HFOption {
+	return func(cfg *HFConfig) {
+		cfg.Client = client
+	}
+}
+
+var globalKeys []string
+var globalKeysLock sync.Mutex
+
+// NewHFClient constructs an HFClient with sane defaults + options
+func NewHFClient(router routing.Router, cacheDir string, opts ...HFOption) *HFClient {
+	// default config
+	cfg := HFConfig{
+		Router:         router,
+		HFCacheDir:     cacheDir,
+		ResolveTimeout: 60 * time.Second,
+		ResolveRetries: 3,
+		Log:            logr.Discard(),
+		Client: &http.Client{
+			Timeout:   5 * time.Minute,
+			Transport: http.DefaultTransport,
+		},
+	}
+
+	// apply options
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+
+	return &HFClient{
+		Router:         cfg.Router,
+		HFCacheDir:     cfg.HFCacheDir,
+		ResolveTimeout: cfg.ResolveTimeout,
+		ResolveRetries: cfg.ResolveRetries,
+		Log:            cfg.Log,
+		Client:         cfg.Client,
+	}
+}
+
+// ... imports
+
+// HuggingFaceRegistryHandler serves HF resources from P2P or upstream, logs if cached locally
+func (h *HFClient) HuggingFaceRegistryHandler(rw mux.ResponseWriter, req *http.Request) {
+	start := time.Now()
+	cleanPath := path.Clean(req.URL.Path)
+
+	h.Log.Info("incoming huggingface request",
+		"path", cleanPath,
+		"remote", req.RemoteAddr,
+		"method", req.Method)
+
+	// ---- Classification ----
+	isResolve := strings.Contains(cleanPath, "/resolve/")
+	isBlob := strings.Contains(cleanPath, "/blobs/") || strings.Contains(cleanPath, "/cdn-lfs")
+	isAPI := strings.Contains(cleanPath, "/api/") || strings.Contains(cleanPath, "/resolve-cache/")
+
+	h.Log.Info("request classification",
+		"isResolve", isResolve,
+		"isBlob", isBlob,
+		"isAPI", isAPI)
+
+	if !isResolve && !isBlob && !isAPI {
+		h.Log.Info("unsupported huggingface request", "path", cleanPath)
+		http.Error(rw, "unsupported huggingface request", http.StatusBadRequest)
+		return
+	}
+
+	h.Log.Info("processing model/blob request", "url", cleanPath)
+
+	var cacheFilePath string // snapshotFile or blobFile candidate
+
+	// ---- LOCAL CACHE LOOKUP ----
+	parts := strings.Split(strings.TrimPrefix(cleanPath, "/huggingface/"), "/")
+	h.Log.Info("parsed path parts", "parts", parts)
+
+	if len(parts) >= 2 {
+		orgModel := fmt.Sprintf("models--%s--%s", parts[0], parts[1])
+		modelDir := filepath.Join(h.HFCacheDir, orgModel)
+		h.Log.Info("derived modelDir", "orgModel", orgModel, "modelDir", modelDir)
+
+		// Handle /resolve/<ref>/<filename>
+		if isResolve && len(parts) >= 5 {
+			ref := parts[3]                          // e.g., "main"
+			filename := strings.Join(parts[4:], "/") // e.g., "LICENSE" or nested file path
+			refFile := filepath.Join(modelDir, "refs", ref)
+			h.Log.Info("checking snapshot ref file", "refFile", refFile, "ref", ref, "filename", filename)
+
+			if shaBytes, err := os.ReadFile(refFile); err == nil {
+				sha := strings.TrimSpace(string(shaBytes))
+				snapshotFile := filepath.Join(modelDir, "snapshots", sha, filename)
+				h.Log.Info("snapshot ref resolved", "sha", sha, "snapshotFile", snapshotFile)
+
+				if _, err := os.Stat(snapshotFile); err == nil {
+					h.Log.Info("serving locally (file exists in HF cache)",
+						"orgModel", orgModel, "ref", ref, "sha", sha, "file", filename)
+					http.ServeFile(rw, req, snapshotFile)
+					return
+				} else {
+					cacheFilePath = snapshotFile
+					h.Log.Info("file missing, will use snapshotFile for P2P", "snapshotFile", snapshotFile)
+				}
+			} else {
+				h.Log.Info("Cached missed foor ref file", "refFile", refFile)
+			}
+		}
+
+		// Handle /blobs/<sha>
+		if isBlob && len(parts) >= 3 {
+			blobFile := filepath.Join(modelDir, "blobs", parts[len(parts)-1])
+			h.Log.Info("checking blob file", "blobFile", blobFile)
+
+			if _, err := os.Stat(blobFile); err == nil {
+				h.Log.Info("blob exists in local HF cache, skipping P2P/upstream",
+					"orgModel", orgModel, "file", parts[len(parts)-1])
+				return
+			}
+			cacheFilePath = blobFile
+		}
+	} else {
+		h.Log.Info("path did not have enough parts", "parts", parts)
+	}
+
+	// ---- P2P RESOLUTION ----
+	key := fmt.Sprintf("hf:%s", cleanPath)
+	h.Log.Info("computed P2P key", "key", key, "isResolve", isResolve, "isBlob", isBlob)
+
+	ctx, cancel := context.WithTimeout(req.Context(), h.ResolveTimeout)
+	defer cancel()
+
+	if cacheFilePath != "" {
+		peerCh, err := h.Router.Resolve(ctx, key, h.ResolveRetries)
+		if err == nil {
+			count := 0
+			for peer := range peerCh {
+				count++
+				h.Log.Info("got peer from",
+					"peer", peer,
+					"attempt", count,
+					"expectedFile", filepath.Base(cacheFilePath),
+					"cacheFilePath", cacheFilePath)
+
+				if err := h.forwardRequest(req, rw, peer.String(), key, cacheFilePath, isResolve); err == nil {
+					h.Log.Info("served huggingface resource from peer",
+						"peer", peer,
+						"file", filepath.Base(cacheFilePath))
+					h.Log.Info("request completed via P2P", "duration", time.Since(start))
+					return
+				}
+				h.Log.Error(err, "peer lookup failed",
+					"file", filepath.Base(cacheFilePath),
+					"peer", peer,
+					"attempt", count)
+			}
+			if count == 0 {
+				h.Log.Info("no peers resolved for key", "key", key)
+			}
+		} else {
+			h.Log.Error(err, "failed to resolve P2P peers", "key", key)
+		}
+	}
+
+	// ---- UPSTREAM FALLBACK ----
+	h.Log.Info("falling back to upstream", "path", cleanPath, "cacheFilePath", cacheFilePath)
+	if h.serveFromFallback(rw, req, cleanPath, isResolve, isBlob, isAPI, key) {
+		h.Log.Info("request completed via fallback", "duration", time.Since(start))
+	}
+}
+
+// handleXetAPIRequest handles Xet API requests specifically
+func (h *HFClient) handleXetAPIRequest(rw http.ResponseWriter, req *http.Request, cleanPath, key string, start time.Time) {
+	parts := strings.Split(strings.TrimPrefix(cleanPath, "/huggingface/"), "/")
+	h.Log.Info("Xet API path parts", "parts", parts)
+
+	if len(parts) < 6 {
+		h.Log.Error(nil, "invalid Xet API path", "path", cleanPath)
+		http.Error(rw, "invalid Xet API path", http.StatusBadRequest)
+		return
+	}
+
+	// Extract model info from Xet API path: /api/models/Qwen/Qwen3-4B-Instruct-2507/xet-read-token/cdbee75f17c01a7cc42f958dc650907174af0554
+	org := parts[2]
+	model := parts[3]
+	sha := parts[5]
+
+	orgModel := fmt.Sprintf("models--%s--%s", org, model)
+	modelDir := filepath.Join(h.HFCacheDir, orgModel)
+
+	h.Log.Info("Xet API request details",
+		"org", org,
+		"model", model,
+		"sha", sha,
+		"modelDir", modelDir)
+
+	// Create the proper key for the actual file (not the Xet API)
+	// We need to guess the filename since Xet API doesn't tell us
+	// Common Hugging Face model file patterns
+	possibleFilenames := []string{
+		"model-00001-of-00003.safetensors",
+		"model.safetensors",
+		"pytorch_model.bin",
+		"model.safetensors.index.json",
+		"config.json",
+	}
+
+	var targetFile string
+	var cacheFilePath string
+
+	// Try to find the corresponding file for this SHA
+	snapshotDir := filepath.Join(modelDir, "snapshots", sha)
+	if _, err := os.Stat(snapshotDir); err == nil {
+		// Directory exists, look for files
+		if files, err := os.ReadDir(snapshotDir); err == nil {
+			for _, file := range files {
+				if !file.IsDir() {
+					targetFile = file.Name()
+					cacheFilePath = filepath.Join(snapshotDir, targetFile)
+					h.Log.Info("found file in snapshot", "file", targetFile, "cachePath", cacheFilePath)
+					break
+				}
+			}
+		}
+	}
+
+	// If no file found, use the first possible filename as a guess
+	if targetFile == "" {
+		targetFile = possibleFilenames[0]
+		cacheFilePath = filepath.Join(snapshotDir, targetFile)
+		h.Log.Info("no file found in snapshot, using default", "file", targetFile, "cachePath", cacheFilePath)
+	}
+
+	// Create the proper key for the actual file (not the Xet API)
+	fileKey := fmt.Sprintf("hf:/huggingface/%s/%s/resolve/main/%s", org, model, targetFile)
+	h.Log.Info("attempting P2P resolution for Xet API file", "fileKey", fileKey, "cachePath", cacheFilePath)
+
+	// Always attempt P2P resolution for Xet API requests
+	ctx, cancel := context.WithTimeout(req.Context(), h.ResolveTimeout)
+	defer cancel()
+
+	peerCh, err := h.Router.Resolve(ctx, fileKey, h.ResolveRetries)
+	if err == nil {
+		count := 0
+		for peer := range peerCh {
+			count++
+			h.Log.Info("got peer for Xet API file",
+				"peer", peer,
+				"attempt", count,
+				"file", targetFile,
+				"cacheFilePath", cacheFilePath)
+
+			// Forward the Xet API request to the peer's Xet API endpoint
+			if err := h.forwardRequest(req, rw, peer.String(), fileKey, cacheFilePath, false); err == nil {
+				h.Log.Info("served Xet API resource from peer",
+					"peer", peer,
+					"file", targetFile)
+				h.Log.Info("Xet API request completed via P2P", "duration", time.Since(start))
+				return
+			}
+			h.Log.Error(err, "Xet API peer lookup failed",
+				"file", targetFile,
+				"peer", peer,
+				"attempt", count)
+		}
+		h.Log.Info("Xet API P2P resolution attempted but no successful peers", "attempts", count)
+	} else {
+		h.Log.Error(err, "failed to resolve P2P peers for Xet API", "fileKey", fileKey)
+	}
+
+	// Fallback to upstream for Xet API
+	h.Log.Info("falling back to upstream for Xet API", "path", cleanPath)
+	if h.serveFromFallback(rw, req, cleanPath, false, false, true, key) {
+		h.Log.Info("Xet API request completed via fallback", "duration", time.Since(start))
+	}
+}
+
+func (h *HFClient) serveFromFallback(rw http.ResponseWriter, req *http.Request, cleanPath string, isResolve, isBlob, isAPI bool, key string) bool {
+	h.Log.Info("serveFromFallback started",
+		"path", cleanPath,
+		"method", req.Method,
+		"isResolve", isResolve,
+		"isBlob", isBlob,
+		"isAPI", isAPI)
+	start := time.Now()
+
+	var pathForUpstream string
+	var source string
+
+	// Handle different path types for upstream
+	if isAPI {
+		// For API requests (including Xet), use the path as-is but remove /huggingface prefix
+		pathForUpstream = strings.TrimPrefix(cleanPath, "/huggingface")
+		source = "Hugging Face API"
+	} else if isResolve {
+		// For resolve requests, remove /huggingface prefix
+		pathForUpstream = strings.TrimPrefix(cleanPath, "/huggingface")
+		source = "Hugging Face website/API"
+	} else {
+		// For blob requests, use the path as-is
+		pathForUpstream = cleanPath
+		source = "Hugging Face LFS"
+	}
+
+	h.Log.Info("upstream URL type", "source", source, "pathForUpstream", pathForUpstream)
+
+	upstreamURL := fmt.Sprintf("https://huggingface.co%s", pathForUpstream)
+	h.Log.Info("upstream URL computed", "finalUpstreamURL", upstreamURL, "method", req.Method)
+
+	// --- 2. Client Setup with CheckRedirect (Crucial Logic) ---
+	tr := &http.Transport{
+		Proxy:           http.ProxyFromEnvironment,
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{
+		Timeout:   30 * time.Minute,
+		Transport: tr,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// h.logUpstreamHeaders(req.Context(), req.URL.String(), req.Header)
+			// CRUCIAL: Do NOT follow redirects for HEAD for large files.
+			//if req.Method == "HEAD" && h.isLargeModelFile(filepath.Base(cleanPath)) {
+			if req.Method == "HEAD" && isXetURL(req.URL.String()) {
+				// VERBOSE LOG: Stopping redirect for HEAD
+				h.Log.Info("CheckRedirect hit: preventing redirect for HEAD request")
+				return http.ErrUseLastResponse
+			}
+			// CRUCIAL: Follow redirects internally for GET.
+			if len(via) >= 10 {
+				h.Log.Error(nil, "CheckRedirect hit: too many redirects")
+				return fmt.Errorf("too many redirects")
+			}
+			// VERBOSE LOG: Following redirect for GET
+			h.Log.Info("CheckRedirect hit: GET request following internal redirect", "from", via[len(via)-1].URL, "to", req.URL)
+			return nil
+		},
+	}
+
+	// --- 3. Create and Send Upstream Request ---
+	reqUpstream, err := http.NewRequestWithContext(req.Context(), req.Method, upstreamURL, nil)
+	if err != nil {
+		h.Log.Error(err, "failed to create upstream request", "url", upstreamURL)
+		http.Error(rw, fmt.Sprintf("failed to create request: %v", err), http.StatusInternalServerError)
+		return true
+	}
+
+	// Copy headers
+	h.Log.Info("copying original request headers to upstream request") // VERBOSE LOG
+	for key, values := range req.Header {
+		for _, value := range values {
+			// Exclude hop-by-hop headers and ensure all headers are copied
+			reqUpstream.Header.Add(key, value)
+		}
+	}
+	// Check and set User-Agent
+	if reqUpstream.Header.Get("User-Agent") == "" {
+		reqUpstream.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Clyde-HFProxy/1.0)")
+		h.Log.Info("User-Agent set (default)", "value", reqUpstream.Header.Get("User-Agent")) // VERBOSE LOG
+	} else {
+		h.Log.Info("User-Agent already present", "value", reqUpstream.Header.Get("User-Agent")) // VERBOSE LOG
+	}
+	// Head specific header
+	if req.Method == "HEAD" {
+		reqUpstream.Header.Set("Accept-Encoding", "identity")
+		h.Log.Info("HEAD request: added Accept-Encoding identity header") // VERBOSE LOG
+	}
+
+	h.Log.Info("sending upstream request", "method", req.Method, "url", upstreamURL, "headers_count", len(reqUpstream.Header)) // VERBOSE LOG: added header count
+
+	// Make the request
+	resp, err := client.Do(reqUpstream)
+	if err != nil {
+		h.Log.Error(err, "failed to fetch from upstream", "url", upstreamURL)
+		http.Error(rw, fmt.Sprintf("failed to fetch from upstream: %v", err), http.StatusBadGateway)
+		return true
+	}
+	defer resp.Body.Close()
+
+	// VERBOSE LOG: Received initial response
+	h.Log.Info("upstream response received", "status", resp.StatusCode, "method", req.Method,
+		"content-length", resp.ContentLength, "location", resp.Header.Get("Location"))
+
+	// --- 4. Copy Headers ---
+	h.Log.Info("copying all upstream response headers to client response writer") // VERBOSE LOG
+	// Copy all headers immediately to the response writer.
+	for k, vv := range resp.Header {
+		for _, v := range vv {
+			rw.Header().Add(k, v)
+		}
+	}
+
+	// --- 5. Handle Redirects (FIXED LOGIC) ---
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		h.Log.Info("redirect status received, handling by method", "status", resp.StatusCode) // VERBOSE LOG
+
+		if req.Method == "HEAD" {
+			// CORRECT: For HEAD, we proxy the redirect status and Location header to the client.
+			rw.WriteHeader(resp.StatusCode)
+			h.Log.Info("HEAD redirect successfully proxied and completed", "status", resp.StatusCode,
+				"location", rw.Header().Get("Location"), "duration", time.Since(start))
+			return true
+		}
+
+		// If req.Method is GET and we get a 3xx status, the internal client FAILED to follow
+		// the redirect. We log the error but allow it to fall through.
+		// We do NOT write the status or return here, as the status writing happens in Step 7.
+		h.Log.Error(nil, "UNEXPECTED 3XX STATUS ON GET: Internal redirect failed to resolve content. Proceeding to write status.",
+			"status", resp.StatusCode, "location", resp.Header.Get("Location"))
+		// Execution continues to step 6/7.
+	}
+
+	// --- 6. Handle HEAD (Non-Redirect) ---
+	if req.Method == "HEAD" {
+		// Status is 200/404/etc. Headers already copied.
+		rw.WriteHeader(resp.StatusCode)
+		h.Log.Info("HEAD request completed (non-redirect path)", "status", resp.StatusCode, // VERBOSE LOG
+			"content-length", resp.ContentLength, "duration", time.Since(start))
+		return true
+	}
+
+	// --- 7. Handle GET (File Downloads) ---
+	h.Log.Info("preparing to finalize response for GET request", "path", cleanPath, "final_status", resp.StatusCode)
+
+	// CRITICAL: If the upstream response is 404, we log it before writing the status.
+	if resp.StatusCode == http.StatusNotFound {
+		h.Log.Error(nil, "upstream returned 404 not found", "upstreamURL", upstreamURL)
+	}
+
+	// Write the final status (200, 206, 404, or the unexpected 3xx from above)
+	// If it's 3xx, the client will fail, but we haven't prematurely exited the function.
+	rw.WriteHeader(resp.StatusCode)
+	h.Log.Info("final HTTP status code written to client", "status", resp.StatusCode) // VERBOSE LOG
+
+	// Stream/Cache logic follows...
+	if req.Method == "GET" {
+		h.Log.Info("streaming file directly", "file_name", filepath.Base(cleanPath)) // VERBOSE LOG
+
+		n, err := io.Copy(rw, resp.Body)
+		if err != nil {
+			h.Log.Error(err, "failed to stream response to client", "file", filepath.Base(cleanPath), "bytesCopied", n)
+		} else {
+			h.Log.Info("File streamed successfully", "file", filepath.Base(cleanPath), "bytes", n)
+		}
+		// }
+		go func() {
+			if err := h.Router.Advertise(context.Background(), []string{key}); err != nil {
+				h.Log.Error(err, "failed to advertise key", "key", key)
+			} else {
+				h.Log.Info("advertised key successfully", "key", key)
+				globalKeys = []string{}
+				h.Log.Info("cleared globalKeys", "key", globalKeys)
+
+			}
+		}()
+
+		h.Log.Info("file cached and served successfully", "file", cleanPath, "bytes", n)
+	}
+
+	h.Log.Info("request handler execution flow completed", "duration", time.Since(start)) // VERBOSE LOG: final log
+	return true
+}
+
+// Helper: perform a short HEAD (no redirects) and log interesting headers for debugging
+// Returns true if the URL contains the X-Xet-Cas-Uid query parameter or host contains "xet"
+func isXetURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+
+	// Optional: check if host contains "xet"
+	if strings.Contains(strings.ToLower(u.Host), "xet") {
+		return true
+	}
+
+	// Check query parameters for X-Xet-Cas-Uid
+	query := u.Query()
+	if _, ok := query["X-Xet-Cas-Uid"]; ok {
+		return true
+	}
+
+	return false
+}
+
+// Improved getCacheFilename method
+func (h *HFClient) getCacheFilename(cleanPath string) string {
+	// Extract filename from path
+	base := filepath.Base(cleanPath)
+
+	// For resolve paths, extract the actual filename
+	if strings.Contains(cleanPath, "/resolve/") {
+		parts := strings.Split(cleanPath, "/")
+		if len(parts) > 0 {
+			filename := parts[len(parts)-1]
+			// Sanitize filename to remove any query parameters
+			if idx := strings.Index(filename, "?"); idx != -1 {
+				filename = filename[:idx]
+			}
+			if idx := strings.Index(filename, "&"); idx != -1 {
+				filename = filename[:idx]
+			}
+			return filename
+		}
+	}
+
+	return base
+}
+
+// Helper function to identify large model files that should use P2P
+func (h *HFClient) isLargeModelFile(filename string) bool {
+	// 1. Extension-based detection
+	exts := []string{".safetensors", ".bin", ".pt", ".ckpt", ".pth", ".hf", ".onnx", "tokenizer.json"}
+	for _, ext := range exts {
+		if strings.HasSuffix(filename, ext) {
+			return true
+		}
+	}
+
+	// 2. SHA-like detection (40–64 hex chars, no extension)
+	base := filepath.Base(filename)
+	if !strings.Contains(base, ".") {
+		if len(base) >= 40 && len(base) <= 64 {
+			matched, _ := regexp.MatchString("^[a-f0-9]+$", base)
+			if matched {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func (h *HFClient) normalizeHuggingFaceURL(path string, isBlob bool) string {
+	h.Log.Info("normalizeHuggingFaceURL input", "path", path, "isBlob", isBlob)
+
+	if isBlob {
+		return fmt.Sprintf("https://cdn-lfs.huggingface.co%s", path)
+	}
+
+	// For resolve paths, HuggingFace expects the commit hash to be preserved
+	// Don't replace with "main" as this breaks the API
+	return fmt.Sprintf("https://huggingface.co%s", path)
+}
+
+// forwardRequest proxies to peer
+func (h *HFClient) forwardRequest(req *http.Request, rw http.ResponseWriter, peerAddr, key string, cacheFile string, isResolve bool) error {
+	start := time.Now()
+	var u *url.URL
+	if isResolve {
+		u = &url.URL{
+			Scheme: "http",
+			Host:   peerAddr,
+			Path:   req.URL.Path,
+		}
+	} else {
+		u = &url.URL{
+			Scheme: "http",
+			Host:   peerAddr,
+			Path:   cacheFile,
+		}
+	}
+
+	h.Log.Info("forwarding request to peer",
+		"peer", peerAddr,
+		"peerURL", u.String(),
+		"method", req.Method,
+	)
+
+	peerReq, err := http.NewRequestWithContext(req.Context(), http.MethodGet, u.String(), nil)
+	if err != nil {
+		h.Log.Error(err, "failed to create peer request")
+		return err
+	}
+	copyHeader(peerReq.Header, req.Header)
+
+	resp, err := h.Client.Do(peerReq)
+	if err != nil {
+		h.Log.Error(err, "failed to contact peer")
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		io.Copy(io.Discard, resp.Body)
+		h.Log.Error(nil, "unexpected peer status", "status", resp.Status)
+		return fmt.Errorf("unexpected peer status: %s", resp.Status)
+	}
+
+	// Copy headers to client
+	copyHeader(rw.Header(), resp.Header)
+	rw.WriteHeader(resp.StatusCode)
+
+	// Parse HF path: /huggingface/<org>/<model>/resolve/<commit>/<file>
+	parts := strings.Split(req.URL.Path, "/")
+	if len(parts) < 6 {
+		return fmt.Errorf("invalid HF path: %s", req.URL.Path)
+	}
+	// org := parts[2]
+	// model := parts[3]
+	// commit := parts[5]
+	// fileName := parts[6]
+
+	// cacheFile := filepath.Join(
+	// 	h.HFCacheDir,
+	// 	fmt.Sprintf("models--%s--%s", org, model),
+	// 	"snapshots",
+	// 	commit,
+	// 	fileName,
+	// )
+
+	h.Log.Info("Filepath ", "cacheFile: ", cacheFile)
+
+	if err := os.MkdirAll(filepath.Dir(cacheFile), 0o755); err != nil {
+		h.Log.Error(err, "failed to create cache directories", "dir", filepath.Dir(cacheFile))
+	}
+
+	// Stream to client and cache
+	// var f *os.File
+	reader := io.Reader(resp.Body) // keep as io.Reader
+	// if f, err = os.Create(cacheFile); err != nil {
+	// 	h.Log.Error(err, "failed to create cache file, serving client only", "file", cacheFile)
+	// } else {
+	// 	defer f.Close()
+	// 	reader = io.TeeReader(resp.Body, f) // still io.Reader
+	// }
+
+	n, err := io.Copy(rw, reader) // io.Copy accepts io.Reader
+
+	if err != nil {
+		h.Log.Error(err, "failed streaming peer response to client/cache", "bytesCopied", n)
+		return err
+	}
+
+	h.Log.Info("successfully served from peer and cached locally",
+		"peer", peerAddr,
+		"bytesCopied", n,
+		"cacheFile", cacheFile,
+		"duration", time.Since(start),
+	)
+
+	// Advertise to P2P
+
+	if err := h.Router.Advertise(context.Background(), []string{key}); err != nil {
+		h.Log.Error(err, "failed to advertise key", "key", key)
+	} else {
+		h.Log.Info("advertised key successfully", "key", key)
+		globalKeys = []string{}
+		globalKeys = []string{}
+		h.Log.Info("cleared globalKeys", "key", globalKeys)
+	}
+
+	return nil
+}
+
+// Helper function to copy headers
+func copyHeader(dst, src http.Header) {
+	for k, vv := range src {
+		for _, v := range vv {
+			dst.Add(k, v)
+		}
+	}
+}
+
+func (h *HFClient) WalkHFCacheDir(ctx context.Context) ([]string, error) {
+	var keys []string
+
+	err := filepath.Walk(h.HFCacheDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		// Only consider common Hugging Face cached files
+		lower := strings.ToLower(info.Name())
+		if strings.HasSuffix(lower, ".bin") ||
+			strings.HasSuffix(lower, ".json") ||
+			strings.HasSuffix(lower, ".msgpack") ||
+			strings.HasSuffix(lower, ".onnx") ||
+			strings.HasSuffix(lower, ".safetensors") {
+			key := fmt.Sprintf("hf:%s", strings.ToLower(info.Name()))
+			keys = append(keys, key)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk HF cache dir: %w", err)
+	}
+
+	return keys, nil
+}
+
+func AddHFConfiguration(ctx context.Context, hfCacheDir string) error {
+	if hfCacheDir == "" {
+		return fmt.Errorf("HF cache directory is empty")
+	}
+
+	// Ensure cache directory exists
+	if err := os.MkdirAll(hfCacheDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create Hugging Face cache directory %q: %w", hfCacheDir, err)
+	}
+
+	log := logr.FromContextOrDiscard(ctx)
+	log.Info("Hugging Face configuration applied")
+
+	return nil
+}
