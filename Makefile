@@ -12,7 +12,7 @@ build:
 	goreleaser build --snapshot --clean --skip before
 
 build-image-amd64: build
-	docker build --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 -t ${IMG_REF} .
+	docker build --platform linux/amd64 --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 -t ${IMG_REF} .
 
 build-image-arm64: build
 	docker build --platform linux/arm64 --build-arg TARGETOS=linux --build-arg TARGETARCH=arm64 -t ${IMG_REF} .
