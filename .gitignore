@@ -26,6 +26,9 @@ sir_benchmark/clyde_apull/certs
 sir_benchmark/clyde_apull/Llama-2-7b-chat-hf
 sir_benchmark/clyde_apull/Llama-3.2-1B
 sir_benchmark/clyde_apull/logs
+.DS_Store
+sir_benchmark/.DS_Store
+sir_benchmark/clyde_apull/DeepSeek-R1-Distill-Llama-8B/
 # Added by goreleaser init:
 dist/
 secret/

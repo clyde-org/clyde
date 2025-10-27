@@ -1,0 +1,62 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: deepseek-r1-distill-llama-8b
+spec:
+  completions: 28
+  parallelism: 28
+  template:
+    metadata:
+      labels:
+        app: deepseek-r1-distill-llama-8b
+    spec:
+      containers:
+      - name: deepseek-r1-distill-llama-8b
+        image: sneceesay77/deepseek-r1-distill-llama-8b:v1
+        imagePullPolicy: Always
+      restartPolicy: Never
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - deepseek-r1-distill-llama-8b
+              topologyKey: "kubernetes.io/hostname"
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - master-14-ascd
+                      - master-16
+                      - master-17
+                      - master-19
+                      - master-20
+                      - master-22
+                      - worker-10
+                      - worker-11
+                      - worker-12
+                      - worker-23
+                      - worker-24
+                      - worker-25
+                      - worker-26
+                      - worker-27
+                      - worker-28
+                      - worker-29
+                      - worker-30
+                      - worker-31
+                      - worker-32
+                      - worker-33
+                      - worker-34
+                      - worker-35
+                      - worker-37
+                      - worker-38
+                      - worker-39
+                      - worker-40
+                      - worker-41
+  backoffLimit: 4
