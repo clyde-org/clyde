@@ -157,12 +157,6 @@ spec:
         {{- end }}
         - name: NODE_IP
         {{- include "networking.nodeIp" . | nindent 10 }}
-        - name: HTTP_PROXY
-          value: "http://$(NODE_IP):3128"
-        - name: HTTPS_PROXY
-          value: "http://$(NODE_IP):3128"
-        - name: NO_PROXY
-          value: "127.0.0.1,localhost,.svc.cluster.local,10.*,7.*"
         ports:
           - name: registry
             containerPort: {{ .Values.service.registry.port }}
