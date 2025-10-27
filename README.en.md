@@ -16,8 +16,12 @@ See more in the [design and architecture](./docs/design.md) guide.
 #### Design & Architecture
 Follow the [design and architecture](./docs/design.md) to understand the design and architecture of Clyde.
 
-#### Build and Instal
-Follow the building and installation instruction see [build](./docs/build.md) and [guide](./docs/install.md) respectively to get started
+#### Build and Install
+Follow the building and installation instruction see [build](./docs/build.md) and [install](./docs/install.md) guide respectively to get started
+
+#### Integrate Clyde with Apull (Apull binaries needed)
+Apull is a lazy loading solution developed by Huawei. It enables faster container loading and startup. Follow the [Apull Clyde Installation Instructions](./docs/apull_guide.md). 
+For more details on the technical steps taken see [Apull Clyde Integration](./docs/apull_clyde_integration.md).
 
 #### Contribution
 Read [contribution guidelines](./docs/contributing.md) for instructions on how to build and test Spegel.
