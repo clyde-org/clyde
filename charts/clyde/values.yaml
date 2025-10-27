@@ -15,7 +15,7 @@ nameOverride: ""
 # -- Overrides the full name of the chart.
 fullnameOverride: ""
 # -- Overrides the namespace where clyde resources are installed.
-namespaceOverride: ""
+namespaceOverride: "clyde"
 
 serviceAccount:
   # -- Annotations to add to the service account
