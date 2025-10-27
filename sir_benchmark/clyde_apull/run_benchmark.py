@@ -4,7 +4,7 @@ import argparse
 from kubernetes import client, config, utils
 from kubernetes.client.rest import ApiException
 
-NAMESPACE = "default"
+NAMESPACE = "clyde"
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Deploy and monitor Kubernetes resources")
@@ -18,7 +18,8 @@ def get_resource_name_from_yaml(kind):
     yaml_map = {
         'pod': "llama.yaml",
         'daemonset': "llama_daemonset.yaml",
-        'job': "llama_job.yaml"
+        # 'job': "llama_job.yaml",
+        'job': "deepseek_r1_distill_llama_job.yaml"
     }
     yaml_file = yaml_map[kind]
     with open(yaml_file, "r") as f:
