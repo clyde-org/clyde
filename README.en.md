@@ -24,7 +24,7 @@ Apull is a lazy loading solution developed by Huawei. It enables faster containe
 For more details on the technical steps taken see [Apull Clyde Integration](./docs/apull_clyde_integration.md).
 
 #### Contribution
-Read [contribution guidelines](./docs/contributing.md) for instructions on how to build and test Spegel.
+Read [contribution guidelines](./docs/contributing.md) for instructions on how to build and test Clyde.
 
 #### Acknowledgement
-Many thanks to the developers of [Spegel](https://github.com/spegel-org/spegel) especialy Philip.
+Many thanks to the developers of [Spegel](https://github.com/spegel-org/spegel) especialy the main author Philip.
