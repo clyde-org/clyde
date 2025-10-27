@@ -3,10 +3,10 @@
 Apull is a high-performance container image loading solution that combines kernel EROFS filesystem with fscache for bootstrap loading and userspace processing via apulld to enable lazy loading. This architecture aims to provide faster container startup times, improved network bandwidth efficiency, reduced storage footprint, and built-in data integrity verification.
 
 ## System Requirements
+- Linux Kernel >= 5.10
 - Kernel: EROFS over fscache support
 - containerd ≥ 1.6.14
 - Registry: Register-v2 protocol
-- Image format: tar.gz only
 
 ## Kubernetes Integration
 
