@@ -1,10 +1,10 @@
 clyde:
-  containerdContentPath: "/data/var/lib/containerd/io.containerd.content.v1.content"
+  containerdContentPath: "/var/lib/containerd/io.containerd.content.v1.content"
   debugWebEnabled: true
 
 serviceMonitor:
   # -- If true creates a Prometheus Service Monitor.
-  enabled: true
+  enabled: false
   interval: 15s
   scrapeTimeout: 15s
   namespace: monitoring
