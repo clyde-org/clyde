@@ -1,6 +1,6 @@
 image:
   # -- Image repository.
-  repository: cmc.centralrepo.rnd.huawei.com/clyde/clyde
+  repository: docker pull ghcr.io/fanbondi/clyde
   # -- Image Pull Policy.
   pullPolicy: IfNotPresent
   # -- Overrides the image tag whose default is the chart appVersion.
