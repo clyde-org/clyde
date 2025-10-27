@@ -23,7 +23,7 @@ os.environ["HF_ENDPOINT"] = f"http://{LOCAL_IP}:30020/huggingface"
 ## Import after env vars are set
 from huggingface_hub import snapshot_download
 
-hf_token = "REMOVED"
+hf_token = "REPLACE_WITH_YOUR_HF_KEY"
 repo_id = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
 
 # Start time outside the loop
