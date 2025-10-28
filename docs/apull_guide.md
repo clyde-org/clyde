@@ -95,7 +95,7 @@ sudo systemctl status apull-snapshotter
 ## Image Conversion
 
 ```bash
-sudo apull-image-build convert --oci --oci-ref --source 7.212.124.4:30443/p2p/nvidia-cuda-12.2.0-devel-ubuntu20.04:v1 --target 7.212.124.4:30443/p2p/nvidia-cuda-12.2.0-devel-ubuntu20.04:v1-ref --source-insecure --target-insecure
+sudo apull-image-build convert --oci --oci-ref --source <IP-ADDRESS>:30443/p2p/nvidia-cuda-12.2.0-devel-ubuntu20.04:v1 --target <IP-ADDRESS>:30443/p2p/nvidia-cuda-12.2.0-devel-ubuntu20.04:v1-ref --source-insecure --target-insecure
 ```
 
 ## Testing
@@ -125,7 +125,7 @@ sudo apull-image-build convert --oci --oci-ref --source 7.212.124.4:30443/p2p/nv
         
         containers:
         - name: cuda
-          image: 7.212.124.4:30443/p2p/nvidia-cuda-12.2.0-devel-ubuntu20.04:v1
+          image: <IP-ADDRESS>:30443/p2p/nvidia-cuda-12.2.0-devel-ubuntu20.04:v1
           command: ["/bin/sh", "-c"]
           args: ["while true; do sleep 86400; done"]  # Sleep for 24 hours in a loop
 
@@ -148,7 +148,3 @@ make all
 ```
 
 This will clean up the Kubernetes cluster, update relevant binaries and configuration files on all nodes within the cluster and install a helm deployment for starting the Apull daemon on all the nodes accordingly.
-
-
-
-## Reference Documentation
