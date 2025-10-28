@@ -1,6 +1,6 @@
 image:
   # -- Image repository.
-  repository: ghcr.io/fanbondi/clyde
+  repository: ghcr.io/clyde-org/clyde
   # -- Image Pull Policy.
   pullPolicy: IfNotPresent
   # -- Overrides the image tag whose default is the chart appVersion.

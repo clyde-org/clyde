@@ -15,7 +15,7 @@
 | grafanaDashboard.sidecarLabelValue | string | `"1"` | Label value that ConfigMaps should have to be loaded as dashboards. |
 | image.digest | string | `""` | Image digest. |
 | image.pullPolicy | string | `"IfNotPresent"` | Image Pull Policy. |
-| image.repository | string | `"ghcr.io/fanbondi/clyde"` | Image repository. |
+| image.repository | string | `"ghcr.io/clyde-org/clyde"` | Image repository. |
 | image.tag | string | `""` | Overrides the image tag whose default is the chart appVersion. |
 | imagePullSecrets | list | `[]` | Image Pull Secrets |
 | nameOverride | string | `""` | Overrides the name of the chart. |
