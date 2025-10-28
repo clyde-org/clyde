@@ -100,11 +100,11 @@ sudo make clean
 
 ## Tag Clyde's Image and Pushing it to a Remote Repository
 
-Clyde's image needs to be tagged first, and then pushed to a remote image repository such as `cmc.centralrepo.rnd.huawei.com` by executing the following commands:
+Clyde's image needs to be tagged first, and then pushed to a remote image repository by executing the following commands:
 
 ```
-docker tag clyde:34ebf91 cmc.centralrepo.rnd.huawei.com/clyde/clyde:v12.0
-docker push cmc.centralrepo.rnd.huawei.com/clyde/clyde:v12.0
+docker tag clyde:34ebf91 <REGISTRY-ADDRESS>/clyde/clyde:v12.0
+docker push <REGISTRY-ADDRESS>/clyde/clyde:v12.0
 ```
 
 ## Install Clyde
