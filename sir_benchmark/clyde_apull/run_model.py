@@ -18,7 +18,7 @@ def generate_response():
         # Create the model and tokenizer if they were not previously created
         if model is None or tokenizer is None:
             # Put the location of to the LLAMA 7B model directory that you've downloaded from HuggingFace here
-            model_dir = "/app/Llama-3.2-1B"
+            model_dir = "/app/DeepSeek-R1-Distill-Llama-8B"
                 
             # Create the model and tokenizer
             tokenizer = AutoTokenizer.from_pretrained(model_dir)

@@ -27,7 +27,7 @@ end = time.time()
 log_time("Import flask", start, end)
 
 # Step 2: Load tokenizer
-model_dir = "/app/Llama-3.2-1B"
+model_dir = "/app/DeepSeek-R1-Distill-Llama-8B"
 start = time.time()
 tokenizer = AutoTokenizer.from_pretrained(model_dir)
 end = time.time()
