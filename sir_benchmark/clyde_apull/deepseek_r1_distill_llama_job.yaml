@@ -12,7 +12,7 @@ spec:
     spec:
       containers:
       - name: deepseek-r1-distill-llama-8b
-        image: ghcr.io/clyde-org/deepseek.r1.distill.llama.8b:v4.0
+        image: ghcr.io/clyde-org/deepseek.r1.distill.llama.8b:v5.0
         imagePullPolicy: Always
       restartPolicy: Never
       affinity:
