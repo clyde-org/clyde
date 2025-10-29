@@ -10,7 +10,7 @@
 
 ### Kubernetes Cluster
 
-- Make sure you can access the k8s cluster, a copy of the kubeconfig is stored in this repo at `secrets/yz-p2p.conf`.
+- Make sure you can access the k8s cluster
 - Add this to the end of your `~/.bashrc` file `export KUBECONFIG=<PATH-TO-CONFIG-FILE>/yz-p2p.conf`
 - Run source ~/.bashrc to load the new config in to the shell or restart the new shell
 - In your dev node install kubectl e.g. using `https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/`. Remember to choose the right archtecture..
