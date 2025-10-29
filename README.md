@@ -17,7 +17,6 @@ See more in the [design and architecture](./docs/design.md) guide.
 2. **Speed:** Data is cached locally on nodes and transmitted through the P2P network to enable faster delivery accross the cluster
 3. **Saving:** Save bandwidth by serving content locally instead
 4. **Varsatile:** Avoids rate-limitting and Works even when the external sources is down
-<!-- 4. **Lazy Loading:** Suppoprts lazy loading which significantly reduces container startup -->
 
 ## Design & Architecture
 Follow the [design and architecture](./docs/design.md) to understand the design and architecture of Clyde.
