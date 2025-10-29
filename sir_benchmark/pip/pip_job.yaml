@@ -1,0 +1,81 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pip-exp
+spec:
+  completions: 28
+  parallelism: 28
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app: pip-exp
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: pip-exp
+          image: ghcr.io/clyde-org/pip-exp:v1.0
+          imagePullPolicy: Always
+          args:
+            - "--trusted-host=7.151.6.248"
+            - "--no-cache"
+            - "--force-reinstall"
+          env:
+            # Persist pip cache to reduce repeated downloads (even if --no-cache is removed)
+            - name: PIP_CACHE_DIR
+              value: /data/cache/pip
+            # Optional: for logs to show the node name
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: pip-cache
+              mountPath: /data/cache/pip
+      volumes:
+        - name: pip-cache
+          emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - pip-exp
+              topologyKey: "kubernetes.io/hostname"
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - master-14-ascd
+                      - master-16
+                      - master-17
+                      - master-19
+                      - master-20
+                      - master-22
+                      - worker-10
+                      - worker-11
+                      - worker-12
+                      - worker-23
+                      - worker-24
+                      - worker-25
+                      - worker-26
+                      - worker-27
+                      - worker-28
+                      - worker-29
+                      - worker-30
+                      - worker-31
+                      - worker-32
+                      - worker-33
+                      - worker-34
+                      - worker-35
+                      - worker-37
+                      - worker-38
+                      - worker-39
+                      - worker-40
+                      - worker-41
