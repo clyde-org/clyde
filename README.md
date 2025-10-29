@@ -22,7 +22,7 @@ See more in the [design and architecture](./docs/design.md) guide.
 Follow the [design and architecture](./docs/design.md) to understand the design and architecture of Clyde.
 
 ## Build and Install
-Please follow the building and installation instruction see [build](./docs/build.md) and [guide](./docs/install.md) respectively to get started.
+Please follow the building and installation instruction see [build](./docs/build.md) and install [guide](./docs/install.md) respectively to get started.
 
 ## Contribution
 Read [contribution guidelines](./docs/contributing.md) for instructions on how to build and test Spegel.
