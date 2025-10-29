@@ -107,21 +107,4 @@ docker tag clyde:34ebf91 <REGISTRY-ADDRESS>/clyde/clyde:v12.0
 docker push <REGISTRY-ADDRESS>/clyde/clyde:v12.0
 ```
 
-## Install Clyde
-
-The following commands allows Clyde to be installed on Kubernetes cluster.
-
-```
-helm upgrade --install clyde charts/clyde --create-namespace --namespace clyde -f clyde-values.yml
-helm upgrade --install clyde charts/clyde -f clyde-values.yml
-```
-
-## Uninstall
-
-The following command allows Clyde to be removed from a Kubernetes cluster.
-
-```
-helm delete clyde -n clyde --no-hooks
-```
-
 
