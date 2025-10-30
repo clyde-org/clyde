@@ -1,7 +1,5 @@
 FROM python:3.10-slim
 
-ENV DEBIAN_FRONTEND=noninteractive
-
 WORKDIR /app
 
 RUN apt-get update && \
