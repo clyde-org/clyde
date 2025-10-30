@@ -17,7 +17,7 @@ def parse_args():
 def get_resource_name_from_yaml(kind):
     yaml_map = {
         'pod': "llama.yaml",
-        'daemonset': "llama_daemonset.yaml",
+        'daemonset': "deepseek_r1_distill_llama_daemonset.yaml",
         # 'job': "llama_job.yaml",
         'job': "deepseek_r1_distill_llama_job.yaml"
     }
