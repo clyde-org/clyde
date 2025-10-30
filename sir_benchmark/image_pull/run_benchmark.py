@@ -110,7 +110,7 @@ def main():
     deploy_workload(api_client, yaml_file)
 
     if args.kind in ['pod', 'daemonset', 'job']:
-        expected_count = 8 if args.kind == "job" else None  # Set the number of job pods expected
+        expected_count = 28 if args.kind == "job" else None  # Set the number of job pods expected
         time_to_running = wait_for_phase(v1, apps_v1, batch_v1, resource_name, "Running", args.kind, expected_count)
 
 
