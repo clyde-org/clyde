@@ -29,6 +29,7 @@ sir_benchmark/clyde_apull/logs
 .DS_Store
 sir_benchmark/.DS_Store
 sir_benchmark/clyde_apull/DeepSeek-R1-Distill-Llama-8B/
+sir_benchmark/image_pull/DeepSeek-R1-Distill-Llama-8B/
 # Added by goreleaser init:
 dist/
 secret/

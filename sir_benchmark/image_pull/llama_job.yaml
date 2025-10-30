@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: llama-llama3-2-4
+spec:
+  completions: 8
+  parallelism: 8
+  template:
+    metadata:
+      labels:
+        app: llama-llama3-2-4
+    spec:
+      containers:
+      - name: llama-llama3-2-4
+        image: 7.212.124.4:30443/p2p/llama3.21b:v1
+        imagePullPolicy: Always
+      restartPolicy: Never
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - llama-llama3-2-4
+              topologyKey: "kubernetes.io/hostname"
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - node1
+                      - node2
+                      - node3
+                      - node4
+                      - node5
+                      - node6
+                      - node7
+                      - node8
+  backoffLimit: 4
