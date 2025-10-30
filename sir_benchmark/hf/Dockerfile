@@ -1,4 +1,4 @@
-FROM ubuntu:20.04
+FROM python:3.10-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -15,15 +15,12 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 RUN python3 -m pip install --upgrade pip
-
 RUN pip install huggingface_hub
 
 RUN mkdir -p /data/cache/hf/model
-
 COPY hf_exp.py /app/hf_exp.py
 
 ENV HF_HUB_CACHE="/data/cache/hf/model"
 ENV HF_HUB_DISABLE_XET="1"
-ENV HF_ENDPOINT="http://127.0.0.1:30020/huggingface"
 
 CMD ["python3", "/app/hf_exp.py"]
