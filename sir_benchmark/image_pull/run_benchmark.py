@@ -60,7 +60,7 @@ def wait_for_phase(v1, apps_v1, batch_v1, resource_name, target_phase, kind, exp
                 desired = resource.status.desired_number_scheduled
                 ready = resource.status.number_ready
                 print(f"DaemonSet status: {ready}/{desired} pods ready")
-                if target_phase == "Running" and ready == desired:
+                if target_phase == "Running" and ready == desired and ready > 0 and desired > 0:
                     return time.time() - start_time
 
             elif kind == 'job':
