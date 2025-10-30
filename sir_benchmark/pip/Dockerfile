@@ -1,6 +1,4 @@
-FROM ubuntu:20.04
-
-ENV DEBIAN_FRONTEND=noninteractive
+FROM python:3.10-slim
 
 WORKDIR /app
 
