@@ -53,7 +53,6 @@ RUN curl -sS https://bootstrap.pypa.io/pip/3.8/get-pip.py | python && \
 RUN pip uninstall jax -y
 
 # Copy application and model
-COPY ./run_model.py /app/run_model.py
 COPY ./measure.py /app/measure.py
 COPY ./DeepSeek-R1-Distill-Llama-8B /app/DeepSeek-R1-Distill-Llama-8B
 
