@@ -18,7 +18,7 @@ spec:
           effect: "NoSchedule"
       containers:
         - name: deepseek-r1-distill-llama-8b
-          image: ghcr.io/clyde-org/deepseek.r1.distill.llama.8b:v7.0
+          image: ghcr.io/clyde-org/deepseek.r1.distill.llama.8b:v7.1
           imagePullPolicy: Always
       affinity:
         podAntiAffinity:
