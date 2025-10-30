@@ -11,6 +11,11 @@ spec:
       labels:
         app: deepseek-r1-distill-llama-8b
     spec:
+      # add this toleration for the 32 node cluster only
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
       containers:
         - name: deepseek-r1-distill-llama-8b
           image: ghcr.io/clyde-org/deepseek.r1.distill.llama.8b:v7.0
