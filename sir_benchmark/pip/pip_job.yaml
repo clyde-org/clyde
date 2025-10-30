@@ -14,7 +14,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: pip-exp
-          image: ghcr.io/clyde-org/pip-exp:v1.0
+          image: ghcr.io/clyde-org/pip.exp:v1.0
           imagePullPolicy: Always
           args:
             - "--trusted-host=7.151.6.248"
@@ -29,6 +29,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
           volumeMounts:
             - name: pip-cache
               mountPath: /data/cache/pip
