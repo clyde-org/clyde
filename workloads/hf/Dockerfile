@@ -18,7 +18,4 @@ RUN pip install huggingface_hub
 RUN mkdir -p /data/cache/hf/model
 COPY hf_exp.py /app/hf_exp.py
 
-ENV HF_HUB_CACHE="/data/cache/hf/model"
-ENV HF_HUB_DISABLE_XET="1"
-
-CMD ["python3", "/app/hf_exp.py"]
+CMD ["python3", "hf_exp.py"]
