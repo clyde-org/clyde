@@ -18,4 +18,7 @@ RUN pip install huggingface_hub
 RUN mkdir -p /data/cache/hf/model
 COPY hf_exp.py /app/hf_exp.py
 
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONIOENCODING=UTF-8
+
 CMD ["python3", "hf_exp.py"]
