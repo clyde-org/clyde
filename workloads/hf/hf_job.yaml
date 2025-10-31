@@ -1,17 +1,22 @@
-apiVersion: batch/v1
-kind: Job
+apiVersion: apps/v1
+kind: DaemonSet
 metadata:
   name: hf-exp
 spec:
-  completions: 28
-  parallelism: 28
-  backoffLimit: 4
+  selector:
+    matchLabels:
+      app: hf-exp
   template:
     metadata:
       labels:
         app: hf-exp
     spec:
-      restartPolicy: Never
+      # Allow pods to run on control-plane nodes
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+
       containers:
         - name: hf-exp
           image: ghcr.io/clyde-org/hf.exp:v1.0
@@ -22,20 +27,20 @@ spec:
                 secretKeyRef:
                   name: hf-secret
                   key: HF_TOKEN
-            # Inject node IP into the container
             - name: NODE_IP
               valueFrom:
                 fieldRef:
                   fieldPath: status.hostIP
-            # Set HF_ENDPOINT dynamically based on NODE_IP
             - name: HF_ENDPOINT
               value: "http://$(NODE_IP):30020/huggingface"
           volumeMounts:
             - name: hf-cache
               mountPath: /data/cache/hf/model
+
       volumes:
         - name: hf-cache
           emptyDir: {}
+
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
