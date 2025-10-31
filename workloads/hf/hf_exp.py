@@ -19,7 +19,7 @@ def get_local_ip():
 LOCAL_IP = get_local_ip()
 os.environ["HF_HUB_CACHE"] = "/data/cache/hf/model"
 os.environ["HF_HUB_DISABLE_XET"] = "1"
-os.environ["HF_ENDPOINT"] = f"http://{LOCAL_IP}:30020/huggingface"
+# os.environ["HF_ENDPOINT"] = f"http://{LOCAL_IP}:30020/huggingface".  #comment this out for baseline experiments
 
 ## Import after env vars are set
 from huggingface_hub import snapshot_download
