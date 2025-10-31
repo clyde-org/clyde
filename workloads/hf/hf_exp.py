@@ -25,7 +25,6 @@ os.environ["HF_ENDPOINT"] = f"http://{LOCAL_IP}:30020/huggingface"
 from huggingface_hub import snapshot_download
 
 # hf_token = "REPLACE_WITH_YOUR_HF_KEY"
-hf_token = os.environ["HF_TOKEN"]
 repo_id = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
 
 # Start time outside the loop
@@ -35,7 +34,7 @@ start = time.time()
 for i in range(10):
     try:
         print(f"Download attempt {i+1}...")
-        snapshot_download(repo_id=repo_id, token=hf_token)
+        snapshot_download(repo_id=repo_id)
         end = time.time()
         print(f"Download completed in {end - start:.2f} seconds")
         break
