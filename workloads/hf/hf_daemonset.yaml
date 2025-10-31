@@ -21,15 +21,6 @@ spec:
         - name: hf-exp
           image: ghcr.io/clyde-org/hf.exp:v1.1
           imagePullPolicy: Always
-          env:
-            - name: HF_TOKEN
-              value: "<YOUR_HF_TOKEN_HERE>"
-            - name: NODE_IP
-              valueFrom:
-                fieldRef:
-                  fieldPath: status.hostIP
-            - name: HF_ENDPOINT
-              value: "http://$(NODE_IP):30020/huggingface"
           volumeMounts:
             - name: hf-cache
               mountPath: /data/cache/hf/model
