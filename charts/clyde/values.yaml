@@ -70,7 +70,7 @@ resources:
   requests:
     memory: 256Mi
   limits:
-    memory: 256Mi
+    memory: 4096Mi
 
 # -- Node selector for pod assignment.
 nodeSelector:
