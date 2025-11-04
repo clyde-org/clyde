@@ -19,24 +19,15 @@ spec:
 
       containers:
         - name: hf-exp
-          image: ghcr.io/clyde-org/hf.exp:v1.2
+          image: ghcr.io/clyde-org/hf.exp:v1.1
           imagePullPolicy: Always
-          env:
-            - name: NODE_IP
-              valueFrom:
-                fieldRef:
-                  fieldPath: status.hostIP
-            - name: USE_LOCAL_PROXY
-              value: "true"  # or "false" for baseline
           volumeMounts:
             - name: hf-cache
               mountPath: /data/cache/hf/model
 
       volumes:
         - name: hf-cache
-          hostPath:
-            path: /data/cache/hf/model  # Path on the host node
-            type: DirectoryOrCreate      # Creates directory if missing
+          emptyDir: {}
 
       affinity:
         podAntiAffinity:
