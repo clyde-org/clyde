@@ -702,7 +702,7 @@ func (h *HFClient) WalkHFCacheDir(ctx context.Context) ([]string, error) {
 			return err
 		}
 
-		h.Log.Info("Visiting", "path", path, "isDir", info.IsDir())
+		h.Log.V(4).Info("Visiting", "path", path, "isDir", info.IsDir())
 
 		if info.IsDir() {
 			return nil
@@ -710,7 +710,7 @@ func (h *HFClient) WalkHFCacheDir(ctx context.Context) ([]string, error) {
 
 		// Only consider files under snapshots/
 		if !strings.Contains(path, "/snapshots/") {
-			h.Log.Info("Skipping (not snapshot)", "path", path)
+			h.Log.V(4).Info("Skipping (not snapshot)", "path", path)
 			return nil
 		}
 
@@ -722,7 +722,7 @@ func (h *HFClient) WalkHFCacheDir(ctx context.Context) ([]string, error) {
 			strings.HasSuffix(lower, ".safetensors") ||
 			strings.HasSuffix(lower, ".md")) {
 
-			h.Log.Info("Skipping (unsupported extension)", "file", info.Name())
+			h.Log.V(4).Info("Skipping (unsupported extension)", "file", info.Name())
 			return nil
 		}
 
@@ -737,7 +737,7 @@ func (h *HFClient) WalkHFCacheDir(ctx context.Context) ([]string, error) {
 
 		parts := strings.SplitN(relPath, "/", 3)
 		if len(parts) < 3 {
-			h.Log.Info("Skipping (malformed path)", "relPath", relPath)
+			h.Log.V(4).Info("Skipping (malformed path)", "relPath", relPath)
 			return nil
 		}
 
@@ -751,7 +751,7 @@ func (h *HFClient) WalkHFCacheDir(ctx context.Context) ([]string, error) {
 		rest = strings.Replace(rest, "snapshots/", "resolve/", 1)
 
 		key := fmt.Sprintf("hf:%s/%s", modelPath, rest)
-		h.Log.Info("Discovered HF key", "key", key, "path", path)
+		h.Log.V(4).Info("Discovered HF key", "key", key, "path", path)
 
 		keys = append(keys, key)
 		return nil
@@ -764,7 +764,7 @@ func (h *HFClient) WalkHFCacheDir(ctx context.Context) ([]string, error) {
 
 	h.Log.Info("Completed WalkHFCacheDir", "totalKeys", len(keys))
 	for _, k := range keys {
-		h.Log.Info("Final key", "key", k)
+		h.Log.V(4).Info("Final key", "key", k)
 	}
 
 	return keys, nil
