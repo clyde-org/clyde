@@ -763,10 +763,6 @@ func (h *HFClient) WalkHFCacheDir(ctx context.Context) ([]string, error) {
 	}
 
 	h.Log.Info("Completed WalkHFCacheDir", "totalKeys", len(keys))
-	// for _, k := range keys {
-	// h.Log.V(4).Info("Final key", "key", k)
-	// }
-
 	return keys, nil
 }
 
