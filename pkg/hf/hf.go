@@ -733,7 +733,7 @@ func (h *HFClient) WalkHFCacheDir(ctx context.Context) ([]string, error) {
 		}
 
 		relPath = filepath.ToSlash(relPath)
-		h.Log.Info("Relative path", "relPath", relPath)
+		h.Log.V(4).Info("Relative path", "relPath", relPath)
 
 		parts := strings.SplitN(relPath, "/", 3)
 		if len(parts) < 3 {
