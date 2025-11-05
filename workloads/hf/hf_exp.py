@@ -5,6 +5,7 @@ from datetime import datetime
 
 os.environ["HF_HUB_CACHE"] = "/data/cache/hf/model"
 os.environ["HF_HUB_DISABLE_XET"] = "1"
+os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "120" #Bluezone p2p can be very slow
 
 # Only set HF_ENDPOINT if USE_LOCAL_PROXY=true
 if os.environ.get("USE_LOCAL_PROXY", "false").lower() == "true":
