@@ -43,17 +43,17 @@ def get_package_size(package_name):
         pass
     return "N/A"
 
-def install_packages(trusted_host, no_cache, force_reinstall):
+def install_packages():
     results = []
     
     for package in PACKAGES:
         # Build the command
-        cmd = ["pip", "install", package, "--trusted-host", trusted_host]
+        cmd = ["pip", "install", package]
         
-        if no_cache:
-            cmd.append("--no-cache-dir")
-        if force_reinstall:
-            cmd.append("--force-reinstall")
+        # if no_cache:
+        #     cmd.append("--no-cache-dir")
+        # if force_reinstall:
+        #     cmd.append("--force-reinstall")
         
         print(f"Installing {package}...")
         start_time = time.time()
@@ -97,23 +97,23 @@ def install_packages(trusted_host, no_cache, force_reinstall):
     return results
 
 def main():
-    parser = argparse.ArgumentParser(description="Install AI packages and track size/time")
-    parser.add_argument("--trusted-host", default="7.151.6.248", 
-                       help="Trusted host for pip install")
-    parser.add_argument("--no-cache", action="store_true",
-                       help="Disable pip cache")
-    parser.add_argument("--force-reinstall", action="store_true",
-                       help="Force reinstall packages")
+    # parser = argparse.ArgumentParser(description="Install AI packages and track size/time")
+    # parser.add_argument("--trusted-host", default="7.151.6.248", 
+    #                    help="Trusted host for pip install")
+    # parser.add_argument("--no-cache", action="store_true",
+    #                    help="Disable pip cache")
+    # parser.add_argument("--force-reinstall", action="store_true",
+    #                    help="Force reinstall packages")
     
-    args = parser.parse_args()
+    # args = parser.parse_args()
     
-    print(f"Starting installation with trusted-host: {args.trusted_host}")
-    if args.no_cache:
-        print("Cache: disabled")
-    if args.force_reinstall:
-        print("Mode: force reinstall")
+    # print(f"Starting installation with trusted-host: {args.trusted_host}")
+    # if args.no_cache:
+    #     print("Cache: disabled")
+    # if args.force_reinstall:
+    #     print("Mode: force reinstall")
     
-    results = install_packages(args.trusted_host, args.no_cache, args.force_reinstall)
+    results = install_packages()
     
     # Save to CSV
     csv_file = "package_install_stats.csv"
