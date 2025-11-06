@@ -24,19 +24,18 @@ spec:
           volumeMounts:
             - name: pip-cache
               mountPath: /data/cache/pip
-            - name: pip-conf
-              mountPath: /etc/pip.conf
-              subPath: pip.conf  # mount just the file, not the entire dir
+            - name: etc-config
+              mountPath: /etc   # mount entire etc directory to include pip.conf
 
       volumes:
         - name: pip-cache
           hostPath:
             path: /data/cache/pip
             type: DirectoryOrCreate
-        - name: pip-conf
+        - name: etc-config
           hostPath:
-            path: /etc/pip.conf   # node-level pip.conf with proxy, timeout, etc.
-            type: File
+            path: /etc   # node /etc directory (includes pip.conf and proxy settings)
+            type: Directory
 
       affinity:
         podAntiAffinity:
