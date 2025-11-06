@@ -19,18 +19,18 @@ spec:
 
       containers:
         - name: pip-exp
-          image: ghcr.io/clyde-org/pip.exp:v1.0
+          image: ghcr.io/clyde-org/pip.exp:v1.2
           imagePullPolicy: Always
           volumeMounts:
             - name: pip-cache
-              mountPath: /data/cache/pip
+              mountPath: /data/cache/pip/wheel
             - name: etc-config
               mountPath: /etc   # mount entire etc directory to include pip.conf
 
       volumes:
         - name: pip-cache
           hostPath:
-            path: /data/cache/pip
+            path: /data/cache/pip/wheel
             type: DirectoryOrCreate
         - name: etc-config
           hostPath:
