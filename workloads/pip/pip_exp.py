@@ -21,7 +21,8 @@ PACKAGES = [
     "mxnet",
     "opencv-python",
     "xgboost",
-    "lightgbm"
+    "lightgbm",
+    "pyspark",
 ]
 
 def get_package_size(package_name):
