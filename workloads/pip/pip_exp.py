@@ -9,6 +9,7 @@ import csv
 import argparse
 import re
 from datetime import datetime
+import os
 
 # Largest AI packages including torch and tensorflow
 PACKAGES = [
@@ -24,6 +25,9 @@ PACKAGES = [
     "lightgbm",
     "pyspark",
 ]
+
+
+os.environ["PIP_CACHE_DIR"] = "/data/cache/pip/wheel"
 
 def get_package_size(package_name):
     """Get package size from pip show output"""
