@@ -16,10 +16,10 @@ def parse_args():
 
 def get_resource_name_from_yaml(kind):
     yaml_map = {
-        'pod': "hf_pod.yaml",
-        'daemonset': "hf_daemonset.yaml",
+        'pod': "pip_pod.yaml",
+        'daemonset': "pip_daemonset.yaml",
         # 'job': "llama_job.yaml",
-        'job': "hf_job.yaml"
+        'job': "pip_job.yaml"
     }
     yaml_file = yaml_map[kind]
     with open(yaml_file, "r") as f:
