@@ -15,4 +15,7 @@ RUN mkdir -p /data/cache/pip
 
 COPY pip_exp.py /app/pip_exp.py
 
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONIOENCODING=UTF-8
+
 CMD ["python3", "pip_exp.py"]
