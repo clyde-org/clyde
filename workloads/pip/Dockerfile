@@ -11,9 +11,8 @@ RUN apt-get update && \
 
 RUN python3 -m pip install --upgrade pip
 
-ENV PIP_CACHE_DIR=/data/cache/pip
 RUN mkdir -p /data/cache/pip
 
 COPY pip_exp.py /app/pip_exp.py
 
-CMD ["python3", "/app/pip_exp.py"]
+CMD ["python3", "pip_exp.py"]

@@ -1,44 +1,44 @@
-apiVersion: batch/v1
-kind: Job
+apiVersion: apps/v1
+kind: DaemonSet
 metadata:
   name: pip-exp
+  namespace: kube-system
 spec:
-  completions: 28
-  parallelism: 28
-  backoffLimit: 4
+  selector:
+    matchLabels:
+      app: pip-exp
   template:
     metadata:
       labels:
         app: pip-exp
     spec:
-      restartPolicy: Never
+      # Allow pods to run on control-plane nodes
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+
       containers:
         - name: pip-exp
           image: ghcr.io/clyde-org/pip.exp:v1.0
           imagePullPolicy: Always
-          args:
-            - "--trusted-host=7.151.6.248"
-            - "--no-cache"
-            - "--force-reinstall"
-          env:
-            # Persist pip cache to reduce repeated downloads (even if --no-cache is removed)
-            - name: PIP_CACHE_DIR
-              value: /data/cache/pip
-            # Optional: for logs to show the node name
-            - name: NODE_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: spec.nodeName
-            - name: NODE_IP
-              valueFrom:
-                fieldRef:
-                  fieldPath: status.hostIP
           volumeMounts:
             - name: pip-cache
               mountPath: /data/cache/pip
+            - name: pip-conf
+              mountPath: /etc/pip.conf
+              subPath: pip.conf  # mount just the file, not the entire dir
+
       volumes:
         - name: pip-cache
-          emptyDir: {}
+          hostPath:
+            path: /data/cache/pip
+            type: DirectoryOrCreate
+        - name: pip-conf
+          hostPath:
+            path: /etc/pip.conf   # node-level pip.conf with proxy, timeout, etc.
+            type: File
+
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -83,3 +83,5 @@ spec:
                       - worker-39
                       - worker-40
                       - worker-41
+
+      restartPolicy: Always
