@@ -2,7 +2,6 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: pip-exp
-  namespace: kube-system
 spec:
   selector:
     matchLabels:
