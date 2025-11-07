@@ -13,4 +13,12 @@ type Router interface {
 	Resolve(ctx context.Context, key string, count int) (<-chan netip.AddrPort, error)
 	// Advertise broadcasts that the current router can serve the content.
 	Advertise(ctx context.Context, keys []string) error
+	// Fetches keys from a remote peer address discovered via calling Resolve(PeerIndexKey, ...)
+	FetchPeerKeys(ctx context.Context, peer netip.AddrPort) (string, error)
+	// Exposes the currently maintained local set of content keys (digests, etc.) of this peer
+	ServeKeys(ctx context.Context, data string) error
+
 }
+
+// Well-known key used to advertise peer presence so that all peers can be found easily
+const PeerIndexKey = "__peer_index__"

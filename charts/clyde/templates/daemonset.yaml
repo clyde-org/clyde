@@ -191,7 +191,7 @@ spec:
           {{- with .Values.clyde.containerdContentPath }}
           - name: containerd-content
             mountPath: {{ . }}
-            readOnly: true
+            readOnly: false
           {{- end }}
           - name: pip-cache-dir
             mountPath: {{ .Values.pip.pipCacheDir }}

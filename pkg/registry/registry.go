@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	MirroredHeaderKey = "X-Spegel-Mirrored"
+	MirroredHeaderKey = "X-Clyde-Mirrored"
 )
 
 type RegistryConfig struct {
