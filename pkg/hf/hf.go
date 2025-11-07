@@ -81,7 +81,7 @@ func NewHFClient(router routing.Router, cacheDir string, opts ...HFOption) *HFCl
 		ResolveRetries: 3,
 		Log:            logr.Discard(),
 		Client: &http.Client{
-			Timeout:   30 * time.Minute, //since huggingface fille can be large
+			Timeout:   60 * time.Minute, //since huggingface fille can be large
 			Transport: http.DefaultTransport,
 		},
 	}
