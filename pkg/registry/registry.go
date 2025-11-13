@@ -178,25 +178,35 @@ func (r *Registry) Server(addr string) (*http.Server, error) {
 }
 
 func (r *Registry) readyHandler(rw mux.ResponseWriter, req *http.Request) {
+	r.log.V(4).Info("entered readyHandler")
 	rw.SetHandler("ready")
+
 	ok, err := r.router.Ready(req.Context())
 	if err != nil {
+		r.log.V(4).Info("router readiness check failed", "error", err)
 		rw.WriteError(http.StatusInternalServerError, fmt.Errorf("could not determine router readiness: %w", err))
 		return
 	}
+
 	if !ok {
+		r.log.V(4).Info("router not ready")
 		rw.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+
+	r.log.V(4).Info("router ready, returning 200")
 }
 
 func (r *Registry) registryHandler(rw mux.ResponseWriter, req *http.Request) {
+	r.log.V(4).Info("entered registryHandler", "path", req.URL.Path)
 	rw.SetHandler("registry")
 
 	// Check basic authentication
 	if r.username != "" || r.password != "" {
+		r.log.V(4).Info("checking basic authentication")
 		username, password, _ := req.BasicAuth()
 		if r.username != username || r.password != password {
+			r.log.V(4).Info("invalid basic authentication", "username", username)
 			rw.WriteError(http.StatusUnauthorized, errors.New("invalid basic authentication"))
 			return
 		}
@@ -204,34 +214,35 @@ func (r *Registry) registryHandler(rw mux.ResponseWriter, req *http.Request) {
 
 	// Quickly return 200 for /v2 to indicate that registry supports v2.
 	if path.Clean(req.URL.Path) == "/v2" {
+		r.log.V(4).Info("handling /v2 endpoint")
 		rw.SetHandler("v2")
 		rw.WriteHeader(http.StatusOK)
 		return
 	}
 
 	// Parse out path components from request.
+	r.log.V(4).Info("parsing OCI distribution path", "url", req.URL.String())
 	dist, err := oci.ParseDistributionPath(req.URL)
 	if err != nil {
+		r.log.V(4).Info("failed to parse OCI distribution path", "error", err)
 		rw.WriteError(http.StatusNotFound, fmt.Errorf("could not parse path according to OCI distribution spec: %w", err))
 		return
 	}
 
 	// Request with mirror header are proxied.
 	if req.Header.Get(MirroredHeaderKey) != "true" {
-		// Set mirrored header in request to stop infinite loops
+		r.log.V(4).Info("checking local cache before mirroring", "dist", dist.Reference())
 		req.Header.Set(MirroredHeaderKey, "true")
 
-		// If content is present locally we should skip the mirroring and just serve it.
-		// SC: these conditions checks if content is available locally, if that is the case
-		// SC: the next if statement will not be executed because ociErr will be nil and it
-		// SC: proceed to the switch statement to serve the data.
 		var ociErr error
 		if dist.Digest == "" {
 			_, ociErr = r.ociClient.Resolve(req.Context(), dist.Reference())
 		} else {
 			_, ociErr = r.ociClient.Size(req.Context(), dist.Digest)
 		}
+
 		if ociErr != nil {
+			r.log.V(4).Info("local cache miss, forwarding to mirror", "error", ociErr)
 			rw.SetHandler("mirror")
 			r.handleMirror(rw, req, dist)
 			return
@@ -241,42 +252,46 @@ func (r *Registry) registryHandler(rw mux.ResponseWriter, req *http.Request) {
 	// Serve registry endpoints.
 	switch dist.Kind {
 	case oci.DistributionKindManifest:
+		r.log.V(4).Info("serving manifest", "ref", dist.Reference())
 		rw.SetHandler("manifest")
 		r.handleManifest(rw, req, dist)
-		return
 	case oci.DistributionKindBlob:
+		r.log.V(4).Info("serving blob", "ref", dist.Reference())
 		rw.SetHandler("blob")
 		r.handleBlob(rw, req, dist)
-		return
 	default:
+		r.log.V(4).Info("unknown distribution path kind", "kind", dist.Kind)
 		rw.WriteError(http.StatusNotFound, fmt.Errorf("unknown distribution path kind %s", dist.Kind))
-		return
 	}
 }
 
 func (r *Registry) handleMirror(rw mux.ResponseWriter, req *http.Request, dist oci.DistributionPath) {
 	log := r.log.WithValues("ref", dist.Reference(), "path", req.URL.Path)
+	log.V(4).Info("entered handleMirror")
 
 	defer func() {
 		cacheType := "hit"
 		if rw.Status() != http.StatusOK && rw.Status() != http.StatusPartialContent {
 			cacheType = "miss"
 		}
+		log.V(4).Info("mirror request completed", "status", rw.Status(), "cacheType", cacheType)
 		metrics.MirrorRequestsTotal.WithLabelValues(dist.Registry, cacheType).Inc()
 	}()
 
 	if !r.resolveLatestTag && dist.IsLatestTag() {
-		r.log.V(4).Info("skipping mirror request for image with latest tag", "image", dist.Reference())
+		log.V(4).Info("skipping mirror for latest tag", "image", dist.Reference())
 		rw.WriteHeader(http.StatusNotFound)
 		return
 	}
 
-	// Resolve mirror with the requested reference
 	resolveCtx, cancel := context.WithTimeout(req.Context(), r.resolveTimeout)
 	defer cancel()
 	resolveCtx = logr.NewContext(resolveCtx, log)
+	log.V(4).Info("resolving mirror", "ref", dist.Reference())
+
 	peerCh, err := r.router.Resolve(resolveCtx, dist.Reference(), r.resolveRetries)
 	if err != nil {
+		log.V(4).Info("failed to resolve mirror", "error", err)
 		rw.WriteError(http.StatusInternalServerError, fmt.Errorf("error occurred when attempting to resolve mirrors: %w", err))
 		return
 	}
@@ -285,136 +300,165 @@ func (r *Registry) handleMirror(rw mux.ResponseWriter, req *http.Request, dist o
 	for {
 		select {
 		case <-req.Context().Done():
-			// Request has been closed by server or client. No use continuing.
+			log.V(4).Info("mirror request context cancelled")
 			rw.WriteError(http.StatusNotFound, fmt.Errorf("mirroring for image component %s has been cancelled: %w", dist.Reference(), resolveCtx.Err()))
 			return
 		case peer, ok := <-peerCh:
-			// Channel closed means no more mirrors will be received and max retries has been reached.
 			if !ok {
 				err = fmt.Errorf("mirror with image component %s could not be found", dist.Reference())
 				if mirrorAttempts > 0 {
-					err = errors.Join(err, fmt.Errorf("requests to %d mirrors failed, all attempts have been exhausted or timeout has been reached", mirrorAttempts))
+					err = errors.Join(err, fmt.Errorf("requests to %d mirrors failed, all attempts exhausted", mirrorAttempts))
 				}
+				log.V(4).Info("no mirrors available", "attempts", mirrorAttempts)
 				rw.WriteError(http.StatusNotFound, err)
 				return
 			}
 
 			mirrorAttempts++
+			log.V(4).Info("attempting mirror request", "attempt", mirrorAttempts, "mirror", peer)
 
 			err := forwardRequest(r.client, r.bufferPool, req, rw, peer)
-
 			if err != nil {
-				log.Error(err, "request to mirror failed", "attempt", mirrorAttempts, "path", req.URL.Path, "mirror", peer)
+				log.Error(err, "request to mirror failed", "attempt", mirrorAttempts, "mirror", peer)
 				continue
 			}
-			log.V(4).Info("mirrored request", "path", req.URL.Path, "mirror", peer)
+
+			log.V(4).Info("mirrored request successful", "attempt", mirrorAttempts, "mirror", peer)
 			return
 		}
 	}
 }
 
 func (r *Registry) handleManifest(rw mux.ResponseWriter, req *http.Request, dist oci.DistributionPath) {
+	r.log.V(4).Info("entered handleManifest", "ref", dist.Reference(), "digest", dist.Digest)
+
 	if dist.Digest == "" {
+		r.log.V(4).Info("resolving digest for reference", "ref", dist.Reference())
 		dgst, err := r.ociClient.Resolve(req.Context(), dist.Reference())
 		if err != nil {
+			r.log.V(4).Info("failed to resolve digest", "error", err)
 			rw.WriteError(http.StatusNotFound, fmt.Errorf("could not get digest for image %s: %w", dist.Reference(), err))
 			return
 		}
 		dist.Digest = dgst
+		r.log.V(4).Info("resolved digest successfully", "digest", dist.Digest)
 	}
+
+	r.log.V(4).Info("fetching manifest content", "digest", dist.Digest)
 	b, mediaType, err := r.ociClient.GetManifest(req.Context(), dist.Digest)
 	if err != nil {
+		r.log.V(4).Info("failed to get manifest content", "digest", dist.Digest, "error", err)
 		rw.WriteError(http.StatusNotFound, fmt.Errorf("could not get manifest content for digest %s: %w", dist.Digest.String(), err))
 		return
 	}
+
 	rw.Header().Set("Content-Type", mediaType)
 	rw.Header().Set("Content-Length", strconv.FormatInt(int64(len(b)), 10))
 	rw.Header().Set("Docker-Content-Digest", dist.Digest.String())
+
 	if req.Method == http.MethodHead {
+		r.log.V(4).Info("HEAD request, headers only", "digest", dist.Digest)
 		return
 	}
+
 	_, err = rw.Write(b)
 	if err != nil {
-		r.log.Error(err, "error occurred when writing manifest")
+		r.log.Error(err, "error occurred when writing manifest", "digest", dist.Digest)
 		return
 	}
+
+	r.log.V(4).Info("completed handleManifest successfully", "digest", dist.Digest)
 }
 
 func (r *Registry) handleBlob(rw mux.ResponseWriter, req *http.Request, dist oci.DistributionPath) {
-	size, err := r.ociClient.Size(req.Context(), dist.Digest)
+	r.log.V(4).Info("entered handleBlob", "digest", dist.Digest)
 
+	size, err := r.ociClient.Size(req.Context(), dist.Digest)
 	if err != nil {
+		r.log.V(4).Info("failed to get blob size", "digest", dist.Digest, "error", err)
 		rw.WriteError(http.StatusInternalServerError, fmt.Errorf("could not determine size of blob with digest %s: %w", dist.Digest.String(), err))
 		return
 	}
+
+	r.log.V(4).Info("blob size determined", "digest", dist.Digest, "size", size)
 	rw.Header().Set("Accept-Ranges", "bytes")
 	rw.Header().Set("Content-Type", "application/octet-stream")
 	rw.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	rw.Header().Set("Docker-Content-Digest", dist.Digest.String())
+
 	if req.Method == http.MethodHead {
+		r.log.V(4).Info("HEAD request, skipping content body", "digest", dist.Digest)
 		return
 	}
 
+	r.log.V(4).Info("fetching blob content", "digest", dist.Digest)
 	rc, err := r.ociClient.GetBlob(req.Context(), dist.Digest)
 	if err != nil {
+		r.log.V(4).Info("failed to get blob reader", "digest", dist.Digest, "error", err)
 		rw.WriteError(http.StatusInternalServerError, fmt.Errorf("could not get reader for blob with digest %s: %w", dist.Digest.String(), err))
 		return
 	}
 	defer rc.Close()
 
 	http.ServeContent(rw, req, "", time.Time{}, rc)
+	r.log.V(4).Info("completed handleBlob successfully", "digest", dist.Digest)
 }
 
 func forwardRequest(client *http.Client, bufferPool *sync.Pool, req *http.Request, rw http.ResponseWriter, addrPort netip.AddrPort) error {
-	// Do request to mirror.
+	log := logr.FromContextOrDiscard(req.Context()).WithValues("addrPort", addrPort, "path", req.URL.Path)
+	log.V(4).Info("entered forwardRequest")
+
 	forwardScheme := "http"
 	if req.TLS != nil {
 		forwardScheme = "https"
 	}
+
 	u := &url.URL{
 		Scheme:   forwardScheme,
 		Host:     addrPort.String(),
 		Path:     req.URL.Path,
 		RawQuery: req.URL.RawQuery,
 	}
+
+	log.V(4).Info("creating forward request", "url", u.String())
 	forwardReq, err := http.NewRequestWithContext(req.Context(), req.Method, u.String(), nil)
 	if err != nil {
+		log.V(4).Info("failed to create forward request", "error", err)
 		return err
 	}
 	copyHeader(forwardReq.Header, req.Header)
+
 	forwardResp, err := client.Do(forwardReq)
 	if err != nil {
+		log.V(4).Info("forward request failed", "url", u.String(), "error", err)
 		return err
 	}
 	defer forwardResp.Body.Close()
 
-	// Clear body and try next if non 200 response.
 	if forwardResp.StatusCode != http.StatusOK && forwardResp.StatusCode != http.StatusPartialContent {
+		log.V(4).Info("mirror returned non-success status", "status", forwardResp.Status)
 		_, err = io.Copy(io.Discard, forwardResp.Body)
 		if err != nil {
+			log.V(4).Info("error discarding response body", "error", err)
 			return err
 		}
 		return fmt.Errorf("expected mirror to respond with 200 OK or 206 PartialContent but received: %s", forwardResp.Status)
 	}
 
-	// TODO (phillebaba): Is it possible to retry if copy fails half way through?
-	// Copy forward response to response writer.
 	copyHeader(rw.Header(), forwardResp.Header)
-	if forwardResp.StatusCode == http.StatusOK {
-		rw.WriteHeader(http.StatusOK)
-	}
+	rw.WriteHeader(forwardResp.StatusCode)
 
-	if forwardResp.StatusCode == http.StatusPartialContent {
-		rw.WriteHeader(http.StatusPartialContent)
-	}
-
-	//nolint: errcheck // Ignore
 	buf := bufferPool.Get().(*[]byte)
 	defer bufferPool.Put(buf)
+
+	log.V(4).Info("copying response body from mirror", "status", forwardResp.Status)
 	_, err = io.CopyBuffer(rw, forwardResp.Body, *buf)
 	if err != nil {
+		log.Error(err, "failed to copy response body from mirror")
 		return err
 	}
+
+	log.V(4).Info("completed forwardRequest successfully", "status", forwardResp.Status)
 	return nil
 }
 
