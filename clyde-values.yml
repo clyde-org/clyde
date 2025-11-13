@@ -1,6 +1,7 @@
 clyde:
   containerdContentPath: "/var/lib/containerd/io.containerd.content.v1.content"
   debugWebEnabled: true
+  includeImages: ""
 
 serviceMonitor:
   # -- If true creates a Prometheus Service Monitor.
