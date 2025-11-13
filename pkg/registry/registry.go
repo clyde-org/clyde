@@ -317,7 +317,7 @@ func (r *Registry) handleMirror(rw mux.ResponseWriter, req *http.Request, dist o
 			mirrorAttempts++
 			log.V(4).Info("attempting mirror request", "attempt", mirrorAttempts, "mirror", peer)
 
-			err := forwardRequest(r.client, r.bufferPool, req, rw, peer)
+			err := r.forwardRequest(r.client, r.bufferPool, req, rw, peer)
 			if err != nil {
 				log.Error(err, "request to mirror failed", "attempt", mirrorAttempts, "mirror", peer)
 				continue
@@ -404,9 +404,10 @@ func (r *Registry) handleBlob(rw mux.ResponseWriter, req *http.Request, dist oci
 	r.log.V(4).Info("completed handleBlob successfully", "digest", dist.Digest)
 }
 
-func forwardRequest(client *http.Client, bufferPool *sync.Pool, req *http.Request, rw http.ResponseWriter, addrPort netip.AddrPort) error {
-	log := logr.FromContextOrDiscard(req.Context()).WithValues("addrPort", addrPort, "path", req.URL.Path)
+func (r *Registry) forwardRequest(client *http.Client, bufferPool *sync.Pool, req *http.Request, rw http.ResponseWriter, addrPort netip.AddrPort) error {
+	log := r.log.WithValues("addrPort", addrPort, "path", req.URL.Path)
 	log.V(4).Info("entered forwardRequest")
+	r.log.V(4).Info("entered forwardRequest")
 
 	forwardScheme := "http"
 	if req.TLS != nil {
