@@ -140,6 +140,7 @@ spec:
           {{- end }}
           - --debug-web-enabled={{ .Values.clyde.debugWebEnabled }}
           - --enable-pip-proxy={{ .Values.clyde.enablePipProxy }}
+          - --include-images={{ .Values.clyde.includeImages }}
         env:
         {{- if ((.Values.resources).limits).cpu }}
         - name: GOMAXPROCS
