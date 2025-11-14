@@ -1,4 +1,5 @@
 clyde:
+  logLevel: "DEBUG"
   containerdContentPath: "/var/lib/containerd/io.containerd.content.v1.content"
   debugWebEnabled: true
 
