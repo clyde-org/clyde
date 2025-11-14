@@ -104,6 +104,10 @@ func getLocalBlobs(ctx context.Context, ociClient oci.Client, includedImages []s
 
 func isIncludedImage(imageWithTag string, images []string) bool {
 	
+	if len(images) == 0 {
+		return false
+	}
+	
 	for _, image := range images {
 		if strings.Contains(imageWithTag, image) {
 			return true
