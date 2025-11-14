@@ -166,7 +166,7 @@ clyde:
   debugWebEnabled: false
   # -- Whether to enable PIP proxy
   enablePipProxy: true
-  includeImages: "testimage,testimage2"
+  includeImages: []
   
 
 pip:
