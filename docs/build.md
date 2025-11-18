@@ -90,6 +90,12 @@ Successfully tagged clyde:6a1d49a
 sudo make build-image-amd64
 ```
 
+### Build for Multiple Architectures
+
+```
+sudo make build-image-multiarch
+```
+
 ## Cleanup
 
 Execute the following command to remove the `dist` directory.
