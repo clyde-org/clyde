@@ -1,7 +1,5 @@
 ## Clyde
 Clyde is a high-performance peer-to-peer (P2P) data acceleration engine built for rapid, large-scale delivery across diverse and distributed compute environments. Originally designed to optimize container image distribution across cluster nodes, Clyde now extends its capabilities to general content delivery including Huggingface models and Python (pip) packages. By leveraging intelligent peer discovery and local data sharing, Clyde dramatically reduces network overhead, speeds up deployment times, and enhances scalability for AI and cloud-native workloads. 
-<!-- Clyde also supports lazy loading using Apull -->
-
 
 ## Architecture
 ![Clyde Architecture](./docs/img/clyde-design.png "Clyde Architecture")
