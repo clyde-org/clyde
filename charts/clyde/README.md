@@ -1,4 +1,6 @@
-# Doc
+# Clyde
+
+Stateless cluster local OCI registry mirror.
 
 ## Values
 
@@ -7,24 +9,45 @@
 | affinity | object | `{}` | Affinity settings for pod assignment. |
 | basicAuthSecretName | string | `""` | Name of secret containing basic authentication credentials for registry. |
 | clusterDomain | string | `"cluster.local."` | Domain configured for service domain names. |
+| clyde.additionalMirrorTargets | list | `[]` | Additional target mirror registries other than Clyde. |
+| clyde.containerdContentPath | string | `"/var/lib/containerd/io.containerd.content.v1.content"` | Path to Containerd content store.. |
+| clyde.containerdMirrorAdd | bool | `true` | If true Clyde will add mirror configuration to the node. |
+| clyde.containerdNamespace | string | `"k8s.io"` | Containerd namespace where images are stored. |
+| clyde.containerdRegistryConfigPath | string | `"/etc/containerd/certs.d"` | Path to Containerd mirror configuration. |
+| clyde.containerdSock | string | `"/run/containerd/containerd.sock"` | Path to Containerd socket. |
+| clyde.debugWebEnabled | bool | `false` | When true enables debug web page. |
+| clyde.enablePipProxy | bool | `true` | Whether to enable PIP proxy |
+| clyde.logLevel | string | `"INFO"` | Minimum log level to output. Value should be DEBUG, INFO, WARN, or ERROR. |
+| clyde.mirrorResolveRetries | int | `3` | Max amount of mirrors to attempt. |
+| clyde.mirrorResolveTimeout | string | `"20ms"` | Max duration spent finding a mirror. |
+| clyde.mirroredRegistries | list | `[]` | Registries for which mirror configuration will be created. Empty means all registires will be mirrored. |
+| clyde.prependExisting | bool | `false` | When true existing mirror configuration will be kept and Clyde will prepend it's configuration. |
+| clyde.resolveLatestTag | bool | `true` | When true latest tags will be resolved to digests. |
+| clyde.resolveTags | bool | `true` | When true Clyde will resolve tags to digests. |
 | commonLabels | object | `{}` | Common labels to apply to all rendered resources. |
 | fullnameOverride | string | `""` | Overrides the full name of the chart. |
 | grafanaDashboard.annotations | object | `{}` | Annotations that ConfigMaps can have to get configured in Grafana, See: sidecar.dashboards.folderAnnotation for specifying the dashboard folder. https://github.com/grafana/helm-charts/tree/main/charts/grafana |
 | grafanaDashboard.enabled | bool | `false` | If true creates a Grafana dashboard. |
 | grafanaDashboard.sidecarLabel | string | `"grafana_dashboard"` | Label that ConfigMaps should have to be loaded as dashboards. |
 | grafanaDashboard.sidecarLabelValue | string | `"1"` | Label value that ConfigMaps should have to be loaded as dashboards. |
+| hf.hfCacheDir | string | `"/data/cache/hf/model"` | this is where huggingface models are stored |
 | image.digest | string | `""` | Image digest. |
 | image.pullPolicy | string | `"IfNotPresent"` | Image Pull Policy. |
 | image.repository | string | `"ghcr.io/clyde-org/clyde"` | Image repository. |
 | image.tag | string | `""` | Overrides the image tag whose default is the chart appVersion. |
 | imagePullSecrets | list | `[]` | Image Pull Secrets |
 | nameOverride | string | `""` | Overrides the name of the chart. |
-| namespaceOverride | string | `""` | Overrides the namespace where clyde resources are installed. |
+| namespaceOverride | string | `"clyde"` | Overrides the namespace where clyde resources are installed. |
 | nodeSelector | object | `{"kubernetes.io/os":"linux"}` | Node selector for pod assignment. |
+| pip.indexURL | string | `"https://pypi.org/simple"` | REQUIRED: Base URL of the Python package index (e.g. http://host:port/simple/)   |
+| pip.pipCacheDir | string | `"/data/cache/pip/wheel"` | this is where pip data such as .whl or tar.gz files will be stored                          |
+| pip.pipConfigPath | string | `"/etc"` | Path to the pip configuration file |
+| pip.timeout | int | `300` | Default timeout in seconds for pip operations                      |
+| pip.trustedHosts | list | `[]` | trusted hosts                          |
 | podAnnotations | object | `{}` | Annotations to add to the pod. |
 | podSecurityContext | object | `{}` | Security context for the pod. |
 | priorityClassName | string | `"system-node-critical"` | Priority class name to use for the pod. |
-| resources | object | `{"limits":{"memory":"128Mi"},"requests":{"memory":"128Mi"}}` | Resource requests and limits for the Clyde container. |
+| resources | object | `{"limits":{"memory":"4096Mi"},"requests":{"memory":"256Mi"}}` | Resource requests and limits for the Clyde container. |
 | revisionHistoryLimit | int | `10` | The number of old history to retain to allow rollback. |
 | securityContext | object | `{}` | Security context for the Clyde container. |
 | service.cleanup.port | int | `8080` | Port to expose cleanup probe on. |
@@ -43,20 +66,6 @@
 | serviceMonitor.metricRelabelings | list | `[]` | List of relabeling rules to apply to the samples before ingestion. |
 | serviceMonitor.relabelings | list | `[]` | List of relabeling rules to apply the target’s metadata labels. |
 | serviceMonitor.scrapeTimeout | string | `"30s"` | Prometheus scrape interval timeout. |
-| clyde.additionalMirrorTargets | list | `[]` | Additional target mirror registries other than clyde. |
-| clyde.containerdContentPath | string | `"/var/lib/containerd/io.containerd.content.v1.content"` | Path to Containerd content store.. |
-| clyde.containerdMirrorAdd | bool | `true` | If true Clyde will add mirror configuration to the node. |
-| clyde.containerdNamespace | string | `"k8s.io"` | Containerd namespace where images are stored. |
-| clyde.containerdRegistryConfigPath | string | `"/etc/containerd/certs.d"` | Path to Containerd mirror configuration. |
-| clyde.containerdSock | string | `"/run/containerd/containerd.sock"` | Path to Containerd socket. |
-| clyde.debugWebEnabled | bool | `false` | When true enables debug web page. |
-| clyde.logLevel | string | `"INFO"` | Minimum log level to output. Value should be DEBUG, INFO, WARN, or ERROR. |
-| clyde.mirrorResolveRetries | int | `3` | Max amount of mirrors to attempt. |
-| clyde.mirrorResolveTimeout | string | `"20ms"` | Max duration spent finding a mirror. |
-| clyde.mirroredRegistries | list | `[]` | Registries for which mirror configuration will be created. Empty means all registires will be mirrored. |
-| clyde.prependExisting | bool | `false` | When true existing mirror configuration will be kept and Clyde will prepend it's configuration. |
-| clyde.resolveLatestTag | bool | `true` | When true latest tags will be resolved to digests. |
-| clyde.resolveTags | bool | `true` | When true Clyde will resolve tags to digests. |
 | tolerations | list | `[{"key":"CriticalAddonsOnly","operator":"Exists"},{"effect":"NoExecute","operator":"Exists"},{"effect":"NoSchedule","operator":"Exists"}]` | Tolerations for pod assignment. |
 | updateStrategy | object | `{}` | An update strategy to replace existing pods with new pods. |
 | verticalPodAutoscaler.controlledResources | list | `[]` | List of resources that the vertical pod autoscaler can control. Defaults to cpu and memory |

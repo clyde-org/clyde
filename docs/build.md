@@ -1,18 +1,56 @@
-# Build Instructions
+# Clyde Build & Deployment Guide
 
-This documentation details the steps for building the project, creating and pushing a relevant container image to a remote repository, and the installation process on a Kubernetes cluster.
+This guide describes how to build Clyde from source, create container images for multiple architectures, push images to a remote registry, and deploy Clyde on a Kubernetes cluster.
 
-## Build the Project
+---
 
-For building the project, please execute the following command:
+## 1. Prerequisites
 
+* Go installed
+* Docker installed (with `buildx` recommended for multi-arch builds)
+* Make & GoReleaser installed
+* Kubernetes cluster & Helm installed
+
+Clone the code:
+
+```bash
+git clone https://github.com/fanbondi/clyde.git
+cd clyde
 ```
+
+## 2. Quick Build (All-in-One)
+
+For a fast, standard build including binaries and images:
+
+```bash
+# Build binaries for all supported architectures
+make build
+
+# Build multi-arch container image
+sudo make build-image
+
+# Tag and push (replace with actual registry and version)
+docker tag clyde:<commit-sha> <REGISTRY>/clyde:v15.0
+docker push <REGISTRY>/clyde:v15.0
+```
+
+> This will produce multi-arch binaries under `dist/` and a single multi-architecture container image that supports both AMD64 and ARM64.
+
+---
+
+## 3. Detailed Build Process
+
+### 3.1 Build Clyde Binaries
+
+Run:
+
+```bash
 make build
 ```
 
 This will produce the `dist` directory under the project's root directory containing the Go executables and dependencies necessary to run the application on top of ARM 64-bit systems. The following is a SAMPLE output that shows the outputs targetting different architectures are built:
 
-```
+```bash
 make build
 goreleaser build --snapshot --clean --skip before
   • skipping before and validate...
@@ -43,24 +81,29 @@ goreleaser build --snapshot --clean --skip before
 
 Please note that some changes have been introduced to the Makefile such as removing the flag option `--single-target` from the `build` rule, when invoking the GoReleaser command to build the project artefacts, because this flag defaults to amd64 architecture. Removing this flag will allow GoReleaser to build for all the targets specified in the `.goreleaser.yml` file including both `amd64` and `arm64`.
 
-## Build the Project's Container Image
 
-The Makefile was updated with two separate rules for building Clyde container images targetting `amd64` and `arm64` architectures, passing the correct environment arguments to the Docker build system. The following sections contain instructions on how to build the container images.
+### 3.2 Build Container Images
 
-### Build for ARM (64-bit) Architecture
+#### Multi-arch Build (Recommended)
 
+```bash
+sudo make build-image
 ```
+
+* This uses Docker Buildx to create a single image that supports both AMD64 and ARM64.
+* Add and optional `--push` to directly push to a remote registry.
+
+#### Separate Builds for each architecture 
+
+```bash
+sudo make build-image-amd64
 sudo make build-image-arm64
 ```
 
-The output should look similar to this:
+> Sample Docker build output for either architecture:
 
-```
+```bash
 docker build --build-arg TARGETOS=linux --build-arg TARGETARCH=arm64 -t clyde:$(git rev-parse --short HEAD) .
-DEPRECATED: The legacy builder is deprecated and will be removed in a future release.
-            Install the buildx component to build images with BuildKit:
-            https://docs.docker.com/go/buildx/
-
 Sending build context to Docker daemon  121.9MB
 Step 1/6 : FROM gcr.io/distroless/static:nonroot
  ---> 55be039f1638
@@ -84,27 +127,66 @@ Successfully built e9c604be7690
 Successfully tagged clyde:6a1d49a
 ```
 
-### Build for AMD (64-bit) Architecture
+---
 
-```
-sudo make build-image-amd64
-```
+### 3.3 Cleanup
 
-## Cleanup
+Remove build artifacts:
 
-Execute the following command to remove the `dist` directory.
-
-```
+```bash
 sudo make clean
 ```
 
-## Tag Clyde's Image and Pushing it to a Remote Repository
+---
 
-Clyde's image needs to be tagged first, and then pushed to a remote image repository by executing the following commands:
+### 3.4 Tag & Push Images
 
+Tag the image with your registry and version:
+
+```bash
+docker tag clyde:<commit-sha> <REGISTRY>/clyde:v15.0
+docker push <REGISTRY>/clyde:v15.0
 ```
-docker tag clyde:34ebf91 <REGISTRY-ADDRESS>/clyde/clyde:v12.0
-docker push <REGISTRY-ADDRESS>/clyde/clyde:v12.0
+
+Replace `<commit-sha>`, `<REGISTRY>`, and version with your actual values.
+
+---
+
+## 4. Installation on Kubernetes
+
+### 4.1 Deploy via Helm
+
+```bash
+helm upgrade --install clyde charts/clyde -f charts/clyde/clyde-values.yml
 ```
 
+### 4.2 Verify Deployment
+
+```bash
+kubectl get pods -n clyde
+```
+
+![image](img/clyde_pods.png)
+
+```bash 
+kubectl get svc -n clyde
+kubectl logs -l app=clyde -n clyde
+```
+
+* Check that Clyde is serving/caching images by observing logs or metrics.
+
+### 4.3 Uninstall
+
+```bash
+helm delete clyde -n clyde --no-hooks
+kubectl delete namespace clyde --ignore-not-found
+```
+
+---
+
+### Notes
+
+* Removing `--single-target` allows GoReleaser to build all architectures.
+* Use Docker Buildx to build proper multi-arch images.
+* Always verify image tags and commit SHA before pushing to registry.
 

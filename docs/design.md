@@ -31,7 +31,7 @@ The Local Data Source is the storage backend where content such as container ima
 ## User sequence Diagram
 
 ```mermaid
-sequenceDiagrams
+sequenceDiagram
     participant Client as Client (e.g. pip, ctr, git)
     participant Service as Local Runtime (e.g. pip, containerd, git)
     participant Proxy as Clyde Proxy (P2P)
