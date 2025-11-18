@@ -180,6 +180,7 @@ pip:
   pipCacheDir: "/data/cache/pip/wheel"
 
 hf:
+  # -- this is where huggingface models are stored
   hfCacheDir: "/data/cache/hf/model"
 
 verticalPodAutoscaler:
