@@ -30,6 +30,8 @@ workloads/clyde_apull/logs
 workloads/.DS_Store
 workloads/clyde_apull/DeepSeek-R1-Distill-Llama-8B/
 workloads/image_pull/DeepSeek-R1-Distill-Llama-8B/
+workloads/clyde_nydus/DeepSeek-R1-Distill-Llama-8B/
+charts/clyde/clyde-v1.0.tgz
 # Added by goreleaser init:
 dist/
 secret/

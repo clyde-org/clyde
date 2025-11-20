@@ -121,7 +121,7 @@ func TestParseImageRequireDigestErrors(t *testing.T) {
 		},
 		{
 			name:          "no tag or digest",
-			s:             "clyde",
+			s:             "ghcr.io/clyde-org/clyde",
 			dgst:          "",
 			expectedError: "image needs to contain a digest",
 		},
