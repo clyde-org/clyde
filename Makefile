@@ -36,4 +36,4 @@ tools:
 	GO111MODULE=on go install github.com/norwoodj/helm-docs/cmd/helm-docs@v1.12.0
 
 helm-docs: tools
-	cd ./charts/clyde && helm-doc
+	cd ./charts/clyde && helm-docs
