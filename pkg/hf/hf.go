@@ -25,6 +25,7 @@ type HFClient struct {
 	Client         *http.Client
 	ResolveTimeout time.Duration
 	ResolveRetries int
+	BaseURL        string
 }
 
 // HFConfig holds constructor settings for HFClient
@@ -35,6 +36,7 @@ type HFConfig struct {
 	ResolveRetries int
 	Log            logr.Logger
 	Client         *http.Client
+	BaseURL        string
 }
 
 // Option type for functional configuration
@@ -68,8 +70,11 @@ func WithHFHTTPClient(client *http.Client) HFOption {
 	}
 }
 
-// var globalKeys []string
-// var globalKeysLock sync.Mutex
+func WithHFBaseURL(url string) HFOption {
+	return func(c *HFConfig) {
+		c.BaseURL = url
+	}
+}
 
 // NewHFClient constructs an HFClient with sane defaults + options
 func NewHFClient(router routing.Router, cacheDir string, opts ...HFOption) *HFClient {
@@ -80,6 +85,7 @@ func NewHFClient(router routing.Router, cacheDir string, opts ...HFOption) *HFCl
 		ResolveTimeout: 60 * time.Second,
 		ResolveRetries: 3,
 		Log:            logr.Discard(),
+		BaseURL:        "https://huggingface.co",
 		Client: &http.Client{
 			Timeout:   60 * time.Minute, //since huggingface fille can be large
 			Transport: http.DefaultTransport,
@@ -100,10 +106,9 @@ func NewHFClient(router routing.Router, cacheDir string, opts ...HFOption) *HFCl
 		ResolveRetries: cfg.ResolveRetries,
 		Log:            cfg.Log,
 		Client:         cfg.Client,
+		BaseURL:        cfg.BaseURL,
 	}
 }
-
-// ... imports
 
 // HuggingFaceRegistryHandler serves HF resources from P2P or upstream, logs if cached locally
 func (h *HFClient) HuggingFaceRegistryHandler(rw mux.ResponseWriter, req *http.Request) {
@@ -129,8 +134,7 @@ func (h *HFClient) HuggingFaceRegistryHandler(rw mux.ResponseWriter, req *http.R
 		"isXetAPI", isXetAPI)
 
 	// ---- P2P RESOLUTION ----
-	var key string
-	key = fmt.Sprintf("hf:%s", cleanPath)
+	key := fmt.Sprintf("hf:%s", cleanPath)
 
 	h.Log.Info("computed P2P key", "key", key, "isResolve", isResolve, "isBlob", isBlob, "isXetAPI", isXetAPI)
 
@@ -154,7 +158,7 @@ func (h *HFClient) HuggingFaceRegistryHandler(rw mux.ResponseWriter, req *http.R
 		var orgModel string
 		var modelDir string
 		if isResolve {
-			// /huggingface/Qwen/Qwen3-4B-Instruct-2507/resolve/main/model-00001-of-00003.safetensors"
+			//For example /huggingface/Qwen/Qwen3-4B-Instruct-2507/resolve/main/model-00001-of-00003.safetensors"
 			orgModel = fmt.Sprintf("models--%s--%s", parts[0], parts[1])
 			modelDir = filepath.Join(h.HFCacheDir, orgModel)
 			h.Log.Info("derived modelDir", "orgModel", orgModel, "modelDir", modelDir)
@@ -283,8 +287,7 @@ func (h *HFClient) HuggingFaceRegistryHandler(rw mux.ResponseWriter, req *http.R
 	}
 }
 
-// handleXetAPIRequest handles Xet API requests specifically
-
+// If resource not found locally, serve them from the remote
 func (h *HFClient) serveFromFallback(rw http.ResponseWriter, req *http.Request, cleanPath string, isResolve, isBlob, isAPI bool, key string) bool {
 	h.Log.Info("serveFromFallback started",
 		"path", cleanPath,
@@ -314,7 +317,7 @@ func (h *HFClient) serveFromFallback(rw http.ResponseWriter, req *http.Request, 
 
 	h.Log.Info("upstream URL type", "source", source, "pathForUpstream", pathForUpstream)
 
-	upstreamURL := fmt.Sprintf("https://huggingface.co%s", pathForUpstream)
+	upstreamURL := fmt.Sprintf("%s%s", h.BaseURL, pathForUpstream)
 	h.Log.Info("upstream URL computed", "finalUpstreamURL", upstreamURL, "method", req.Method)
 
 	// --- 2. Client Setup with CheckRedirect (Crucial Logic) ---
@@ -326,9 +329,7 @@ func (h *HFClient) serveFromFallback(rw http.ResponseWriter, req *http.Request, 
 		Timeout:   30 * time.Minute,
 		Transport: tr,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			// h.logUpstreamHeaders(req.Context(), req.URL.String(), req.Header)
 			// CRUCIAL: Do NOT follow redirects for HEAD for large files.
-			//if req.Method == "HEAD" && h.isLargeModelFile(filepath.Base(cleanPath)) {
 			if req.Method == "HEAD" && isXetURL(req.URL.String()) {
 				// VERBOSE LOG: Stopping redirect for HEAD
 				h.Log.Info("CheckRedirect hit: preventing redirect for HEAD request")
@@ -491,31 +492,6 @@ func isXetURL(rawURL string) bool {
 	return false
 }
 
-// Improved getCacheFilename method
-func (h *HFClient) getCacheFilename(cleanPath string) string {
-	// Extract filename from path
-	base := filepath.Base(cleanPath)
-
-	// For resolve paths, extract the actual filename
-	if strings.Contains(cleanPath, "/resolve/") {
-		parts := strings.Split(cleanPath, "/")
-		if len(parts) > 0 {
-			filename := parts[len(parts)-1]
-			// Sanitize filename to remove any query parameters
-			if idx := strings.Index(filename, "?"); idx != -1 {
-				filename = filename[:idx]
-			}
-			if idx := strings.Index(filename, "&"); idx != -1 {
-				filename = filename[:idx]
-			}
-			return filename
-		}
-	}
-
-	return base
-}
-
-// forwardRequest proxies to peer
 // forwardRequest proxies to peer
 func (h *HFClient) forwardRequest(req *http.Request, rw http.ResponseWriter, peerAddr, key string, _ string, isResolve bool) error {
 	start := time.Now()
@@ -537,14 +513,14 @@ func (h *HFClient) forwardRequest(req *http.Request, rw http.ResponseWriter, pee
 			Host:   peerAddr,
 			Path:   req.URL.Path,
 		}
-		h.Log.Info("handling Xet API request HEAD", "apiPath", req.URL.Path)
+		h.Log.V(4).Info("handling Xet API request HEAD", "apiPath", req.URL.Path)
 	} else if isXetAPI && req.Method == "GET" {
 		u = &url.URL{
 			Scheme: "http",
 			Host:   peerAddr,
 			Path:   strings.TrimPrefix(key, "hf:"),
 		}
-		h.Log.Info("handling Xet API request GET", "apiPath", req.URL.Path)
+		h.Log.V(4).Info("handling Xet API request GET", "apiPath", req.URL.Path)
 	} else if isResolve {
 		u = &url.URL{
 			Scheme: "http",
@@ -560,13 +536,6 @@ func (h *HFClient) forwardRequest(req *http.Request, rw http.ResponseWriter, pee
 	}
 
 	h.Log.Info("final target URL", "url", u.String(), "isXetAPI", isXetAPI)
-
-	// Log all incoming headers
-	// for name, values := range req.Header {
-	// 	for _, value := range values {
-	// 		h.Log.Info("HEADER", "name", name, "value", value)
-	// 	}
-	// }
 
 	peerReq, err := http.NewRequestWithContext(req.Context(), http.MethodGet, u.String(), nil)
 
@@ -589,13 +558,6 @@ func (h *HFClient) forwardRequest(req *http.Request, rw http.ResponseWriter, pee
 		peerReq.Header.Set("reqType", "XetAPI")
 	}
 
-	// h.Log.Info("=== OUTGOING TO PEER HEADERS ===")
-	// for name, values := range peerReq.Header {
-	// 	for _, value := range values {
-	// 		h.Log.Info("PEER_HEADER", "name", name, "value", value)
-	// 	}
-	// }
-
 	// Execute peer request#
 	h.Log.Info(fmt.Sprintf("Initiating Peer Request: %+v", peerReq))
 	resp, err := h.Client.Do(peerReq)
@@ -611,13 +573,6 @@ func (h *HFClient) forwardRequest(req *http.Request, rw http.ResponseWriter, pee
 		"contentLength", resp.ContentLength,
 		"isXetAPI", isXetAPI,
 	)
-
-	// Log response headers
-	// for name, values := range resp.Header {
-	// 	for _, value := range values {
-	// 		h.Log.Info("RESP_HEADER", "name", name, "value", value)
-	// 	}
-	// }
 
 	// Accept only 200 and 206
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
@@ -635,9 +590,9 @@ func (h *HFClient) forwardRequest(req *http.Request, rw http.ResponseWriter, pee
 	// Copy peer headers to client
 	copyHeader(rw.Header(), resp.Header)
 
-	// Remove problematic headers that might cause mismatches
-	rw.Header().Del("Content-Length")   // Let Go calculate this automatically
-	rw.Header().Del("Content-Encoding") // Remove encoding headers that might conflict
+	// Remove headers that might cause mismatches
+	rw.Header().Del("Content-Length")
+	rw.Header().Del("Content-Encoding")
 
 	if rw.Header().Get("Content-Type") == "" {
 		if isXetAPI {
@@ -675,8 +630,6 @@ func (h *HFClient) forwardRequest(req *http.Request, rw http.ResponseWriter, pee
 		h.Log.Error(err, "failed to advertise key", "key", key)
 	} else {
 		h.Log.Info("advertised key successfully", "key", key)
-		// globalKeys = []string{}
-		// h.Log.Info("cleared globalKeys", "keys", globalKeys)
 	}
 
 	return nil

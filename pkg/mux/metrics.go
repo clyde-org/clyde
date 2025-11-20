@@ -2,26 +2,20 @@ package mux
 
 import "github.com/prometheus/client_golang/prometheus"
 
-
-const namespace = "clyde"
-
 var (
 	HttpRequestDurHistogram = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Subsystem: "http",
-		Namespace: namespace,
 		Name:      "request_duration_seconds",
 		Help:      "The latency of the HTTP requests.",
 	}, []string{"handler", "method", "code"})
 	HttpResponseSizeHistogram = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Subsystem: "http",
-		Namespace: namespace,
 		Name:      "response_size_bytes",
 		Help:      "The size of the HTTP responses.",
-		Buckets: prometheus.ExponentialBuckets(1024, 5, 10),
+		Buckets:   prometheus.ExponentialBuckets(1024, 5, 10),
 	}, []string{"handler", "method", "code"})
 	HttpRequestsInflight = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Subsystem: "http",
-		Namespace: namespace,
 		Name:      "requests_inflight",
 		Help:      "The number of inflight requests being handled at the same time.",
 	}, []string{"handler"})
