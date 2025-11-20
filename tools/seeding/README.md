@@ -78,7 +78,7 @@ my-app:1.0.0
 
 ```bash
 # Basic usage with default settings
-python seeder.py
+python seeding.py
 ```
 
 ## End to end
@@ -87,7 +87,7 @@ python seeder.py
 #!/bin/bash
 IMAGE=$1
 START_TIME=$(date +%s)
-python clyde_seeder.py --images-to-seed <(echo "$IMAGE") --seeder-percentage 20
+python seeding.py --images-to-seed <(echo "$IMAGE") --seeder-percentage 20
 kubectl apply -f workload.yml
 END_TIME=$(date +%s)
 echo "End-to-end time: $((END_TIME - START_TIME)) seconds"
@@ -97,12 +97,12 @@ echo "End-to-end time: $((END_TIME - START_TIME)) seconds"
 
 ```bash
 # Minimal custom setup
-python seeder.py --seeder-percentage 30
+python seeding.py --seeder-percentage 30
 ```
 
 ```bash
 # Custom configuration example
-python seeder.py \
+python seeding.py \
     --base-dir /path/to/your/config \
     --seeder-percentage 50 \
     --namespace my-namespace \
@@ -112,7 +112,7 @@ python seeder.py \
 
 ```bash
 # With custom file paths (relative to base-dir)
-python seeder.py \
+python seeding.py \
     --base-dir /opt/clyde \
     --seeder-tracker-file data/seeders.json \
     --images-to-seed config/images.txt \
