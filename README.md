@@ -23,6 +23,7 @@ See more in the [design and architecture](./docs/design.md) guide.
 5. **Speed:** Data is cached locally on nodes and transmitted through the P2P network to enable faster delivery across the cluster.
 6. **Saving:** Save bandwidth by serving content locally instead.
 7. **Versatile:** Avoids rate-limiting and works even when external sources are down.
+8. **Preseeding** Preseed common images to nodes before larger deployment. [ More Information Here ](tools/seeding/README.md)
 
 ## Quick Motivating Results
 
