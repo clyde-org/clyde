@@ -16,14 +16,11 @@ import (
 	"clyde/pkg/routing"
 )
 
-// This is used as an indicator which can be toggled when content is being downloaded by any arbitrary worker
-var busy_indicator = false
-
 func synchronise(ctx context.Context, ociClient oci.Client, router routing.Router, images []string, ContainerdContentPath string) error {
 	log := logr.FromContextOrDiscard(ctx)
 
 	// Set the global indicator to true
-	busy_indicator = true
+	setBusy(true)
 
 	// Obtain local content
 	jsonData, localSet, err := getLocalBlobs(ctx, ociClient, images)
@@ -202,7 +199,7 @@ func synchronise(ctx context.Context, ociClient oci.Client, router routing.Route
 			wg.Wait()
 
 			// Set the indicator back to false
-			busy_indicator = false
+			setBusy(false)
 		}
 
 	} else {
@@ -210,7 +207,7 @@ func synchronise(ctx context.Context, ociClient oci.Client, router routing.Route
 	}
 
 	// Defensive programming here, setting indicator to false
-	busy_indicator = false
+	setBusy(false)
 	return nil
 
 }

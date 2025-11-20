@@ -36,10 +36,10 @@ func Track(ctx context.Context, ociClient oci.Client, router routing.Router, res
 			log.Info("running scheduled state update of data artifacts")
 
 			// Perform regular updates here by advertising for all content
-			if !busy_indicator {
+			if !isBusy() {
 				if err := all(ctx, ociClient, router, resolveLatestTag); err != nil {
 					log.Error(err, "received errors when updating all images")
-					// Continue to commence synchronisation with remote peers anyway
+					// Continue with peer synchronisation anyway
 					continue
 				}
 
