@@ -199,7 +199,11 @@ func synchronise(ctx context.Context, ociClient oci.Client, router routing.Route
 			wg.Wait()
 
 			// Set the indicator back to false
+<<<<<<< HEAD
 			setBusy(false)
+=======
+			busy_indicator = false
+>>>>>>> 47e4788dc0976611d3342f3f0a70cc2d6bbb453f
 		}
 
 	} else {
@@ -207,7 +211,11 @@ func synchronise(ctx context.Context, ociClient oci.Client, router routing.Route
 	}
 
 	// Defensive programming here, setting indicator to false
+<<<<<<< HEAD
 	setBusy(false)
+=======
+	busy_indicator = false
+>>>>>>> 47e4788dc0976611d3342f3f0a70cc2d6bbb453f
 	return nil
 
 }
