@@ -34,10 +34,8 @@ func getLocalBlobs(ctx context.Context, ociClient oci.Client, includedImages []s
 		// Use default function to walk through the image content
 		dgsts, err := oci.WalkImage(ctx, ociClient, img)
 		if err != nil {
-			log.Error(err, 
-				"could not walk image", 
-				"image", 
-				img.String())
+			log.Error(err, "could not walk image", 
+				"image", img.String())
 			continue
 		}
 
@@ -57,10 +55,7 @@ func getLocalBlobs(ctx context.Context, ociClient oci.Client, includedImages []s
 				Digest: img.Digest.String(),
 			})
 		} else {
-			log.Info(
-				"Excluding image tag", 
-				ImageNameStr, 
-				ImageTagStr)
+			log.Info("Excluding image tag", ImageNameStr, ImageTagStr)
 		}
 	}
 
@@ -72,9 +67,7 @@ func getLocalBlobs(ctx context.Context, ociClient oci.Client, includedImages []s
 	// Construct data in json representation from local content that was processed
 	data, err := json.Marshal(imageLayers)
 	if err != nil {
-		return "", nil, fmt.Errorf(
-			"failed to marshal json data: %w", 
-			err)
+		return "", nil, fmt.Errorf("failed to marshal json data: %w", err)
 	}
 
 	// Process the keys into a key set that will be used for comparison logic in the state tracker
@@ -145,9 +138,7 @@ func fetchBlob(ctx context.Context, peer netip.AddrPort, registry, name string, 
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		log.Error(
-			err, 
-			"failed to create request")
+		log.Error(err, "failed to create request")
 		return nil, err 
 	}
 	req.Header.Set("X-Clyde-Mirrored", "true")
@@ -156,26 +147,19 @@ func fetchBlob(ctx context.Context, peer netip.AddrPort, registry, name string, 
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Error(
-			err, 
-			"http request failed")
+		log.Error(err, "http request failed")
 		return nil, err 
 	}
 	defer resp.Body.Close()
 
 	// Read the response body for better error messages
 	if resp.StatusCode != http.StatusOK {
-		log.Error(
-			err, 
-			"blob fetch unsuccessful, will retry shortly...")
+		log.Error(err, "blob fetch unsuccessful, will retry shortly...")
 		return nil, err
 	} else {
-		log.Info(
-			"successfully fetched blob",
-			"status",
-			resp.Status,  
-			"digest", 
-			dgst.String())
+		log.Info("successfully fetched blob",
+			"status",resp.Status,  
+			"digest", dgst.String())
 	}
 
 	return resp.Body, nil

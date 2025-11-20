@@ -403,8 +403,7 @@ func (r *P2PRouter) Advertise(ctx context.Context, keys []string) error {
 
 // Used to serve information about local keys to other peers
 func (r *P2PRouter) ServeKeys(ctx context.Context, data string) error {
-	logr.FromContextOrDiscard(ctx).Info(
-		"serving information about local keys as a json string representation to other peers", 
+	logr.FromContextOrDiscard(ctx).Info("serving information about local keys as a json string representation to other peers", 
 		"length", len(data))
 
 	r.localKeysProvider = func(_ context.Context) (string, error) {
@@ -458,10 +457,7 @@ func (r *P2PRouter) FetchPeerKeys(ctx context.Context, peerAddr netip.AddrPort) 
 			err)
 	}
 
-	log.Info(
-		"fetched peer keys", 
-		"length", 
-		len(jsonData))
+	log.Info("fetched peer keys", "length", len(jsonData))
 	return string(jsonData), nil
 }
 

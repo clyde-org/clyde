@@ -25,25 +25,19 @@ func synchronise(ctx context.Context, ociClient oci.Client, router routing.Route
 	// Obtain local content
 	jsonData, localSet, err := getLocalBlobs(ctx, ociClient, images)
 	if err != nil {
-		log.Error(
-			err, 
-			"error collecting local keys")
+		log.Error(err, "error collecting local keys")
 	} else {
 		log.Info("extracted local content")
 	}
 
 	// Serve our keys in a suitable format (e.g., json string) for trasnmission over to peers
 	if err := router.ServeKeys(ctx, jsonData); err != nil {
-		log.Error(
-			err, 
-			"failed to serve local keys")
+		log.Error(err, "failed to serve local keys")
 	}
 
 	// Advertise our presence using the peer index so that other peers can discover me
 	if err := router.Advertise(ctx, []string{routing.PeerIndexKey}); err != nil {
-		log.Error(
-			err, 
-			"failed to advertise peer presence")
+		log.Error(err, "failed to advertise peer presence")
 	}
 
 	missingKeyInfo := make(map[string][]KeySource) // key -> list of sources
@@ -51,20 +45,15 @@ func synchronise(ctx context.Context, ociClient oci.Client, router routing.Route
 	// Discover peers via the peer index and fetch relevant information (e.g., metadata about their content)
 	peerCh, err := router.Resolve(ctx, routing.PeerIndexKey, 0)
 	if err != nil {
-		log.Error(
-			err, 
-			"failed to resolve peer index")
+		log.Error(err, "failed to resolve peer index")
 		return nil
 	}
 
 	for peerAddr := range peerCh {
 		remoteKeys, err := router.FetchPeerKeys(ctx, peerAddr)
 		if err != nil {
-			log.Error(
-				err, 
-				"could not fetch keys from peer", 
-				"peer", 
-				peerAddr)
+			log.Error(err, "could not fetch keys from peer", 
+				"peer", peerAddr)
 			continue 
 		}
 
@@ -75,47 +64,34 @@ func synchronise(ctx context.Context, ociClient oci.Client, router routing.Route
 
 		var imageLayers []map[string]interface{}
 		if err := json.Unmarshal([]byte(remoteKeys), &imageLayers); err != nil {
-			log.Error(
-				err, 
-				"failed to parse json data from peer", 
-				"peer", 
-				peerAddr, 
-				"response", 
-				remoteKeys)
+			log.Error(err, "failed to parse json data from peer", 
+				"peer", peerAddr, 
+				"response", remoteKeys)
 			continue
 		}
 
 		for _, image := range imageLayers {
 			imageName, ok := image["image_name"].(string)
 			if !ok {
-				log.Info(
-					"missing or invalid layer_keys in peer data", 
-					"peer", 
-					peerAddr, 
-					"image", 
-					imageName)
+				log.Info("missing or invalid layer_keys in peer data", 
+					"peer", peerAddr, 
+					"image", imageName)
 				continue
 			}
 
 			layers, ok := image["layer_keys"].([]interface{})
 			if !ok {
-				log.Info(
-					"missing or invalid layer_keys in peer data", 
-					"peer", 
-					peerAddr, 
-					"image", 
-					imageName)
+				log.Info("missing or invalid layer_keys in peer data", 
+					"peer", peerAddr, 
+					"image", imageName)
 				continue
 			}
 
 			registry, ok := image["registry"].(string)
 			if !ok {
-				log.Info(
-					"missing or invalid registry in peer data", 
-					"peer", 
-					peerAddr, 
-					"image", 
-					imageName)
+				log.Info("missing or invalid registry in peer data", 
+					"peer", peerAddr, 
+					"image", imageName)
 				continue	
 			}
 
@@ -152,18 +128,12 @@ func synchronise(ctx context.Context, ociClient oci.Client, router routing.Route
 				}
 			}
 
-			log.Info(
-				"discovered image from peer", 
-				"peer", 
-				peerAddr, 
-				"image", 
-				imageName,
-				"registry", 
-				registry, 
-				"layer_count", 
-				len(layerDigests), 
-				"layers", 
-				layerDigests,)
+			log.Info("discovered image from peer", 
+				"peer", peerAddr, 
+				"image", imageName,
+				"registry", registry, 
+				"layer_count", len(layerDigests), 
+				"layers", layerDigests,)
 		}
 	}
 
@@ -177,12 +147,9 @@ func synchronise(ctx context.Context, ociClient oci.Client, router routing.Route
 			missingKeys = append(missingKeys, key)
 		}
 
-		log.Info(
-			"found potential keys to fetch", 
-			"count", 
-			len(missingKeys), 
-			"keys", 
-			missingKeys)
+		log.Info("found potential keys to fetch", 
+			"count", len(missingKeys), 
+			"keys", missingKeys)
 
 		// Fetch missing keys from remote peers with image context
 		for key, sources := range missingKeyInfo {
@@ -199,11 +166,7 @@ func synchronise(ctx context.Context, ociClient oci.Client, router routing.Route
 			wg.Wait()
 
 			// Set the indicator back to false
-<<<<<<< HEAD
 			setBusy(false)
-=======
-			busy_indicator = false
->>>>>>> 47e4788dc0976611d3342f3f0a70cc2d6bbb453f
 		}
 
 	} else {
@@ -211,11 +174,7 @@ func synchronise(ctx context.Context, ociClient oci.Client, router routing.Route
 	}
 
 	// Defensive programming here, setting indicator to false
-<<<<<<< HEAD
 	setBusy(false)
-=======
-	busy_indicator = false
->>>>>>> 47e4788dc0976611d3342f3f0a70cc2d6bbb453f
 	return nil
 
 }
@@ -223,14 +182,10 @@ func synchronise(ctx context.Context, ociClient oci.Client, router routing.Route
 func worker(ctx context.Context, key string, sources []KeySource, log logr.Logger, ContainerdContentPath string) error {
 	// Log all available sources for this key
 	for _, source := range sources {
-		log.Info(
-			"key availability from source peer", 
-			"key", 
-			key, 
-			"peer", 
-			source.PeerAddr, 
-			"image", 
-			source.ImageName)
+		log.Info("key availability from source peer", 
+			"key", key, 
+			"peer", source.PeerAddr, 
+			"image", source.ImageName)
 	}
 
 	if len(sources) > 0 {
@@ -239,27 +194,18 @@ func worker(ctx context.Context, key string, sources []KeySource, log logr.Logge
 		if len(sources) == 1 {
 			log.Info(
 				"Selected a source (peer) to fetch key from", 
-				"key", 
-				key, 
-				"peer", 
-				source.PeerAddr, 
-				"registry", 
-				source.Registry, 
-				"image", 
-				source.ImageName)
+				"key", key, 
+				"peer", source.PeerAddr, 
+				"registry", source.Registry, 
+				"image", source.ImageName)
 		} else {
 			rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 			source = sources[rng.Intn(len(sources))]
-			log.Info(
-				"Selected a source (peer) to fetch key from", 
-				"key", 
-				key, 
-				"peer", 
-				source.PeerAddr, 
-				"registry", 
-				source.Registry, 
-				"image", 
-				source.ImageName)
+			log.Info("Selected a source (peer) to fetch key from", 
+				"key", key, 
+				"peer", source.PeerAddr, 
+				"registry", source.Registry, 
+				"image", source.ImageName)
 		}
 
 		peerAddr, err := netip.ParseAddrPort(source.PeerAddr)
@@ -283,14 +229,10 @@ func worker(ctx context.Context, key string, sources []KeySource, log logr.Logge
 
 			} else {
 				if err := writeBlobToLocalPath(resp, dgst, ContainerdContentPath); err != nil {
-					log.Error(
-						err, 
-						"failed to write blob to containerd")
+					log.Error(err, "failed to write blob to containerd")
 				} else {
-					log.Info(
-						"blob successfully stored", 
-						"digest", 
-						dgst.String())
+					log.Info("blob successfully stored", 
+						"digest", dgst.String())
 				}
 			}
 
@@ -298,28 +240,17 @@ func worker(ctx context.Context, key string, sources []KeySource, log logr.Logge
 
 			if err != nil {
 				// Error fetching, log the image
-				log.Error(
-					err, 
-					"failed to fetch key", 
-					"key", 
-					key, 
-					"peer", 
-					source.PeerAddr, 
-					"image", 
-					source.ImageName)
+				log.Error(err, "failed to fetch key", 
+					"key", key, 
+					"peer", source.PeerAddr, 
+					"image", source.ImageName)
 			} else {
-				log.Info(
-					"fetched content of key", 
-					"key", 
-					key, 
-					"peer", 
-					source.PeerAddr, 
-					"image", 
-					source.ImageName, 
-					"time in milliseconds:", 
-					elapsed.Microseconds(), 
-					"time in seconds:", 
-					elapsed.Seconds())
+				log.Info("fetched content of key", 
+					"key", key, 
+					"peer", source.PeerAddr, 
+					"image", source.ImageName, 
+					"time in milliseconds:", elapsed.Microseconds(), 
+					"time in seconds:", elapsed.Seconds())
 			}
 		}
 	}
