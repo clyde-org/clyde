@@ -3,10 +3,11 @@ kind: Pod
 metadata:
   name: llama-llama3-2-4
 spec:
-  nodeName: node4
+  nodeName: worker-16
   restartPolicy: Never   
   containers:
   - name: llama-llama3-2-4
-    image: 7.212.124.4:30443/p2p/llama3.21b:v1-ref
+    image: ghcr.io/clyde-org/clyde.nydus:v1.3-nydus
+    #image: 7.212.124.4:30443/p2p/llama3.21b:v1-ref
     # command: ["/bin/sh", "-c"]
     # args: ["while true; do sleep 86400; done"]  # Sleep for 24 hours in a loop

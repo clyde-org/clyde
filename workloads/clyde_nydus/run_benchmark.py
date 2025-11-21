@@ -17,7 +17,7 @@ def parse_args():
 def get_resource_name_from_yaml(kind):
     yaml_map = {
         'pod': "llama.yaml",
-        'daemonset': "llama_daemonset.yaml",
+        'daemonset': "deepseek_r1_distill_llama_daemonset.yaml",
         # 'job': "llama_job.yaml",
         'job': "deepseek_r1_distill_llama_job.yaml"
     }
@@ -60,7 +60,7 @@ def wait_for_phase(v1, apps_v1, batch_v1, resource_name, target_phase, kind, exp
                 desired = resource.status.desired_number_scheduled
                 ready = resource.status.number_ready
                 print(f"DaemonSet status: {ready}/{desired} pods ready")
-                if target_phase == "Running" and ready == desired:
+                if target_phase == "Running" and ready == desired and ready > 0 and desired > 0:
                     return time.time() - start_time
 
             elif kind == 'job':
@@ -110,7 +110,7 @@ def main():
     deploy_workload(api_client, yaml_file)
 
     if args.kind in ['pod', 'daemonset', 'job']:
-        expected_count = 8 if args.kind == "job" else None  # Set the number of job pods expected
+        expected_count = 24 if args.kind == "job" else None  # Set the number of job pods expected
         time_to_running = wait_for_phase(v1, apps_v1, batch_v1, resource_name, "Running", args.kind, expected_count)
 
 
