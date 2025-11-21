@@ -13,7 +13,7 @@ The below configuration must be executed on all the nodes
 
 ```bash
 version = 2
-root = "/data/var/lib/containerd"
+root = "/var/lib/containerd"
 
 [plugins]
     ...
@@ -42,10 +42,14 @@ When you install clyde in your cluster, the installation daemonset configures bo
 ## Quick Start
 The quick install guide installs Clyde directly from the Clyde Helm Chart hosted on GitHub Container Registry (GHCR):
 
+> IMPORTANT: if you have changed the ```root``` of your containerd configuration to a different path, use helm --set command or -f filename.yaml to override the settings in the chart. See [here](../charts/clyde/values.yaml) for default values.
+
 ### Installation
+``` bash
 1. Create namespace in your k8s cluster called clyde `kubectl create namesapace clyde`
 2. Run `helm install clyde oci://ghcr.io/clyde-org/charts/clyde --version v1.1` to install clyde
 3. Run `kubectl get pods -o wide -n clyde`
+```
 
 ![image](img/clyde_pods.png)
 

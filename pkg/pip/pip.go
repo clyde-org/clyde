@@ -382,7 +382,7 @@ func (p *PipClient) forwardRequest(req *http.Request, rw http.ResponseWriter, pe
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, resp.Body)
 		p.Log.Error(nil, "unexpected peer status", "peer", peerAddr, "status", resp.Status, "package", name)
 		return fmt.Errorf("unexpected peer status: %s", resp.Status)
 	}
@@ -436,28 +436,6 @@ func (p *PipClient) forwardRequest(req *http.Request, rw http.ResponseWriter, pe
 	}
 
 	return nil
-}
-
-// ==== LOCAL SERVING ====
-func (p *PipClient) serveLocalWheel(rw http.ResponseWriter, req *http.Request, name string) bool {
-	cacheFile := filepath.Join(p.PipCacheDir, name)
-	p.Log.Info("checking local wheel cache", "file", cacheFile)
-
-	if _, err := os.Stat(cacheFile); err == nil {
-		p.Log.Info("found cached wheel, serving to client", "file", cacheFile)
-		if err := func() error {
-			// Wrap in func to log errors from ServeFile
-			defer func() { p.Log.Info("finished serving cached wheel", "file", cacheFile) }()
-			http.ServeFile(rw, req, cacheFile)
-			return nil
-		}(); err != nil {
-			p.Log.Error(err, "error while serving cached wheel", "file", cacheFile)
-		}
-		return true
-	}
-
-	p.Log.Info("local wheel not found", "file", cacheFile)
-	return false
 }
 
 func copyHeader(dst, src http.Header) {

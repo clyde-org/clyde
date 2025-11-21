@@ -101,21 +101,6 @@ def install_packages():
     return results
 
 def main():
-    # parser = argparse.ArgumentParser(description="Install AI packages and track size/time")
-    # parser.add_argument("--trusted-host", default="7.151.6.248", 
-    #                    help="Trusted host for pip install")
-    # parser.add_argument("--no-cache", action="store_true",
-    #                    help="Disable pip cache")
-    # parser.add_argument("--force-reinstall", action="store_true",
-    #                    help="Force reinstall packages")
-    
-    # args = parser.parse_args()
-    
-    # print(f"Starting installation with trusted-host: {args.trusted_host}")
-    # if args.no_cache:
-    #     print("Cache: disabled")
-    # if args.force_reinstall:
-    #     print("Mode: force reinstall")
     
     results = install_packages()
     

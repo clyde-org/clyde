@@ -144,7 +144,7 @@ func TestHFHandler_BlobFallbackToUpstream_Local(t *testing.T) {
 	// Mock upstream server
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/blobs/") {
-			w.Write([]byte("upstream-blob"))
+			_, _ = w.Write([]byte("upstream-blob"))
 			return
 		}
 		w.WriteHeader(404)
@@ -190,7 +190,7 @@ func TestHFHandler_ResolveP2PHit_Local(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(snapshotsDir, sha), 0755))
 
 	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("peer-content"))
+		_, _ = w.Write([]byte("peer-content"))
 	}))
 	defer peer.Close()
 
@@ -229,7 +229,7 @@ func TestHFHandler_APIFallback_Local(t *testing.T) {
 	tmp := t.TempDir()
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("api-response"))
+		_, _ = w.Write([]byte("api-response"))
 	}))
 	defer upstream.Close()
 
@@ -324,7 +324,7 @@ func TestHFHandler_ResolveUpstreamFallback(t *testing.T) {
 
 	// Set up mock upstream server
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("upstream-content"))
+		_, _ = w.Write([]byte("upstream-content"))
 	}))
 	defer upstream.Close()
 

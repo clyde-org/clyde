@@ -4,7 +4,8 @@ TAG = $$(git rev-parse --short HEAD)
 IMG_NAME ?= clyde
 IMG_REF = $(IMG_NAME):$(TAG)
 
-# Build rules
+lint:
+	golangci-lint run ./...
 
 ## Build using goreleaser
 build:
@@ -25,7 +26,7 @@ build-image-multiarch: build
 # Test and clean rules
 
 ## Run unit tests
-tests:
+unit-test:
 	go test ./...
 
 ## Clean build artefacts

@@ -493,17 +493,14 @@ func hostMatches(host, addrInfo peer.AddrInfo) (bool, error) {
 	return false, nil
 }
 
-func loadOrCreatePrivateKey(ctx context.Context, dataDir string) (crypto.PrivKey, error) { //nolint: ireturn // LibP2P returns interfaces so we also have to.
+func loadOrCreatePrivateKey(ctx context.Context, dataDir string) (crypto.PrivKey, error) {
 	keyPath := filepath.Join(dataDir, "private.key")
 	log := logr.FromContextOrDiscard(ctx).WithValues("path", keyPath)
-	fs := NewInMemoryFileSystem()
-	err := fs.MkdirAll(dataDir, os.FileMode(0o755))
-	// err := os.MkdirAll(dataDir, 0o755)
+	err := os.MkdirAll(dataDir, 0o755)
 	if err != nil {
 		return nil, err
 	}
-	// b, err := os.ReadFile(keyPath)
-	b, err := fs.ReadFile(keyPath)
+	b, err := os.ReadFile(keyPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
@@ -526,8 +523,7 @@ func loadOrCreatePrivateKey(ctx context.Context, dataDir string) (crypto.PrivKey
 			Bytes: pkcs8Bytes,
 		}
 		pemData := pem.EncodeToMemory(block)
-		// err = os.WriteFile(keyPath, pemData, 0o600)
-		err = fs.WriteFile(keyPath, pemData, os.FileMode(0o600))
+		err = os.WriteFile(keyPath, pemData, 0o600)
 		if err != nil {
 			return nil, err
 		}
