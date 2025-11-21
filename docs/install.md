@@ -44,7 +44,7 @@ The quick install guide installs Clyde directly from the Clyde Helm Chart hosted
 
 ### Installation
 1. Create namespace in your k8s cluster called clyde `kubectl create namesapace clyde`
-2. Run `helm install clyde oci://ghcr.io/clyde-org/charts/clyde --version v1.0` to install clyde
+2. Run `helm install clyde oci://ghcr.io/clyde-org/charts/clyde --version v1.1` to install clyde
 3. Run `kubectl get pods -o wide -n clyde`
 
 ![image](img/clyde_pods.png)
