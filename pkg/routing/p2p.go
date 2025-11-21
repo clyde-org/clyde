@@ -179,7 +179,7 @@ func NewP2PRouter(ctx context.Context, addr string, bs Bootstrapper, registryPor
 
 	dhtOpts := []dht.Option{
 		dht.Mode(dht.ModeServer),
-		dht.ProtocolPrefix("/spegel"),
+		dht.ProtocolPrefix("/clyde"),
 		dht.DisableValues(),
 		dht.MaxRecordAge(KeyTTL),
 		dht.BootstrapPeersFunc(bootstrapFunc(ctx, bs, host)),

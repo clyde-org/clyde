@@ -43,7 +43,10 @@ Please follow the building and installation instructions at [build](./docs/build
 
 ## Contribution
 
-Read [contribution guidelines](./docs/contributing.md) for instructions on how to build and test Spegel.
+We welcome new contributors! And we are happy to provide guidance and help for new contributors. Clyde follows the standard Go formatting conventions. 
+
+If you find a bug or have some ideas, please submit an issue.
+
 
 ## Acknowledgement
 
