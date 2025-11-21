@@ -32,8 +32,10 @@ tests:
 clean:
 	rm -rf dist
 
+## Tools rule
 tools:
 	GO111MODULE=on go install github.com/norwoodj/helm-docs/cmd/helm-docs@v1.12.0
 
+## Helm docs rule
 helm-docs: tools
 	cd ./charts/clyde && helm-docs
