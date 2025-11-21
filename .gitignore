@@ -25,7 +25,7 @@ sir_soci
 workloads/.DS_Store
 workloads/image_pull/DeepSeek-R1-Distill-Llama-8B/
 workloads/clyde_nydus/DeepSeek-R1-Distill-Llama-8B/
-charts/clyde/clyde-v1.0.tgz
+charts/clyde/*.tgz
 workloads/clyde_nydus/Qwen--Qwen3-4B-Instruct-2507
 # Added by goreleaser init:
 dist/

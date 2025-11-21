@@ -144,7 +144,7 @@ func TestPipRegistryHandlerP2PResolution(t *testing.T) {
 	t.Parallel()
 
 	peerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("peer wheel content"))
+		_, _ = w.Write([]byte("peer wheel content"))
 	}))
 	defer peerSrv.Close()
 
@@ -181,9 +181,9 @@ func TestPipRegistryHandlerFallback(t *testing.T) {
 
 	fallbackSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/") {
-			w.Write([]byte("fallback index content"))
+			_, _ = w.Write([]byte("fallback index content"))
 		} else {
-			w.Write([]byte("fallback wheel content"))
+			_, _ = w.Write([]byte("fallback wheel content"))
 		}
 	}))
 	defer fallbackSrv.Close()

@@ -39,13 +39,37 @@ Follow the [design and architecture](./docs/design.md) to understand the design 
 
 ## Build and Install
 
-Please follow the building and installation instructions at [build](./docs/build.md) and install [guide](./docs/install.md) respectively to get started.
+Please follow the building and installation instructions at [build](./docs/build.md) and [install](./docs/install.md) guides respectively to get started.
 
 ## Contribution
 
 We welcome new contributors! And we are happy to provide guidance and help for new contributors. Clyde follows the standard Go formatting conventions. 
 
 If you find a bug or have some ideas, please submit an issue.
+
+You would need the following to get started:
+
+```bash 
+go
+golangci-lint
+goreleaser
+docker
+helm
+kubectl
+```
+Follow [build](docs/build.md) to build from source. 
+
+### Acceptance Creteria
+
+- Tests pass `make unit-test`
+- Linter passes `make lint` 
+- Solves the issue
+- Adds tests then run `make lint unit-test`
+- Updates documentation
+- Update helm docs if any `make helm-docs`
+- One logical change
+- Follows project style
+
 
 
 ## Acknowledgement
