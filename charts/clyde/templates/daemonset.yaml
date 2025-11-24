@@ -140,6 +140,7 @@ spec:
           {{- end }}
           - --debug-web-enabled={{ .Values.clyde.debugWebEnabled }}
           - --enable-pip-proxy={{ .Values.clyde.enablePipProxy }}
+          - --include-images={{ .Values.clyde.includeImages }}
         env:
         {{- if ((.Values.resources).limits).cpu }}
         - name: GOMAXPROCS
@@ -191,7 +192,7 @@ spec:
           {{- with .Values.clyde.containerdContentPath }}
           - name: containerd-content
             mountPath: {{ . }}
-            readOnly: true
+            readOnly: false
           {{- end }}
           - name: pip-cache-dir
             mountPath: {{ .Values.pip.pipCacheDir }}

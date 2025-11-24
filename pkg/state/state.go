@@ -16,7 +16,7 @@ import (
 	"clyde/pkg/routing"
 )
 
-func Track(ctx context.Context, ociClient oci.Client, router routing.Router, resolveLatestTag bool, pipClient pip.Pip, hfClient hf.Hf) error {
+func Track(ctx context.Context, ociClient oci.Client, router routing.Router, resolveLatestTag bool, pipClient pip.Pip, hfClient hf.Hf, includeImages []string, ContainerdContentPath string) error {
 	log := logr.FromContextOrDiscard(ctx)
 	eventCh, errCh, err := ociClient.Subscribe(ctx)
 	if err != nil {
@@ -34,9 +34,19 @@ func Track(ctx context.Context, ociClient oci.Client, router routing.Router, res
 			return nil
 		case <-tickerCh:
 			log.Info("running scheduled state update of data artifacts")
-			if err := all(ctx, ociClient, router, resolveLatestTag); err != nil {
-				log.Error(err, "received errors when updating all images")
-				continue
+
+			// Perform regular updates here by advertising for all content
+			if !isBusy() {
+				if err := all(ctx, ociClient, router, resolveLatestTag); err != nil {
+					log.Error(err, "received errors when updating all images")
+					// Continue with peer synchronisation anyway
+					continue
+				}
+
+				// Start synchronisation operation with remote peers for automatic peer discovery and content retrieval
+				if err := synchronise(ctx, ociClient, router, includeImages, ContainerdContentPath); err != nil {
+					log.Error(err, "peer sync failed")
+				}
 			}
 
 			// refresh pip keys
@@ -67,7 +77,6 @@ func Track(ctx context.Context, ociClient oci.Client, router routing.Router, res
 }
 
 func all(ctx context.Context, ociClient oci.Client, router routing.Router, resolveLatestTag bool) error {
-	log := logr.FromContextOrDiscard(ctx).V(4)
 	imgs, err := ociClient.ListImages(ctx)
 	if err != nil {
 		return err
@@ -85,7 +94,6 @@ func all(ctx context.Context, ociClient oci.Client, router routing.Router, resol
 		// Handle the list re-sync as update events; this will also prevent the
 		// update function from setting metrics values.
 		event := oci.ImageEvent{Image: img, Type: oci.UpdateEvent}
-		log.Info("sync image event", "image", event.Image.String(), "type", event.Type)
 		keyTotal, err := update(ctx, ociClient, router, event, skipDigests, resolveLatestTag)
 		if err != nil {
 			errs = append(errs, err)

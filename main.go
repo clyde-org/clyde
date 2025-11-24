@@ -63,6 +63,7 @@ type RegistryCmd struct {
 	MirrorResolveRetries         int           `arg:"--mirror-resolve-retries,env:MIRROR_RESOLVE_RETRIES" default:"3" help:"Max amount of mirrors to attempt."`
 	ResolveLatestTag             bool          `arg:"--resolve-latest-tag,env:RESOLVE_LATEST_TAG" default:"true" help:"When true latest tags will be resolved to digests."`
 	DebugWebEnabled              bool          `arg:"--debug-web-enabled,env:DEBUG_WEB_ENABLED" default:"false" help:"When true enables debug web page."`
+	IncludeImages				 []string	   `arg:"--include-images,env:INCLUDE_IMAGES" help:"List of images to include and the system would look for and download automatically."`
 
 	// pip specific settings
 	EnablePipProxy   bool   `arg:"--enable-pip-proxy,env:ENABLE_PIP_PROXY" default:"false" help:"Enable pip proxy endpoint"`
@@ -210,6 +211,7 @@ func registryCommand(ctx context.Context, args *RegistryCmd) (err error) {
 	}
 	routerOpts := []routing.P2PRouterOption{
 		routing.WithDataDir(args.DataDir),
+		routing.WithIncludeImages(args.IncludeImages),
 	}
 	router, err := routing.NewP2PRouter(ctx, args.RouterAddr, bootstrapper, registryPort, routerOpts...)
 	if err != nil {
@@ -241,7 +243,7 @@ func registryCommand(ctx context.Context, args *RegistryCmd) (err error) {
 
 	// State tracking
 	g.Go(func() error {
-		err := state.Track(ctx, ociClient, router, args.ResolveLatestTag, pipClient, hfClient)
+		err := state.Track(ctx, ociClient, router, args.ResolveLatestTag, pipClient, hfClient, args.IncludeImages, args.ContainerdContentPath)
 		if err != nil {
 			return err
 		}

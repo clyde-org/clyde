@@ -12,6 +12,7 @@ var _ Router = &MemoryRouter{}
 type MemoryRouter struct {
 	resolver map[string][]netip.AddrPort
 	self     netip.AddrPort
+	selfKeys string
 	mx       sync.RWMutex
 }
 
@@ -54,6 +55,26 @@ func (m *MemoryRouter) Advertise(ctx context.Context, keys []string) error {
 		m.Add(key, m.self)
 	}
 	return nil
+}
+
+func (m *MemoryRouter) ServeKeys(ctx context.Context, keys string) error {
+	m.mx.Lock()
+	m.selfKeys = keys
+	m.mx.Unlock()
+
+	return nil
+}
+
+func (m *MemoryRouter) FetchPeerKeys(ctx context.Context, peer netip.AddrPort) (string, error) {
+	m.mx.RLock()
+	defer m.mx.RUnlock()
+
+	if peer == m.self {
+		return m.selfKeys, nil;
+	}
+	// The implementation doesn't keep the keys of other peers but it's a required stub, hence returning an empty array
+	empty := "[]"
+	return empty, nil
 }
 
 func (m *MemoryRouter) Add(key string, ap netip.AddrPort) {

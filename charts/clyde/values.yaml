@@ -166,6 +166,8 @@ clyde:
   debugWebEnabled: false
   # -- Whether to enable PIP proxy
   enablePipProxy: true
+  includeImages: []
+  
 
 pip:
   # -- Path to the pip configuration file

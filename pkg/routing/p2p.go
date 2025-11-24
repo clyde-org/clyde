@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"io"
+	"sync"
 
 	"clyde/pkg/metrics"
 
@@ -32,10 +34,9 @@ import (
 	mc "github.com/multiformats/go-multicodec"
 	mh "github.com/multiformats/go-multihash"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/spf13/afero" // Using afero filesystem abstraction package
+	"github.com/spf13/afero"
+	"github.com/libp2p/go-libp2p/core/network"
 )
-
-// Implementation of in-memory file system mapping
 
 // FileSystem interface defines methods that abstract over conventional file operations
 type FileSystem interface {
@@ -71,11 +72,17 @@ func (ims *InMemoryFileSystem) ReadFile(path string) ([]byte, error) {
 	return afero.ReadFile(ims.fs, path)
 }
 
-const KeyTTL = 10 * time.Minute
+const (
+	// KeyTTL is a timeslice used in the passive synchronisation mechanism within the state tracker
+	KeyTTL = 2 * time.Minute
+	// KeyExchangeProtocol is used for direct interaction between peers
+	KeyExchangeProtocol = "/clyde/keys/1.0.0"
+)
 
 type P2PRouterConfig struct {
 	DataDir    string
 	Libp2pOpts []libp2p.Option
+	IncludeImages []string
 }
 
 func (cfg *P2PRouterConfig) Apply(opts ...P2PRouterOption) error {
@@ -106,6 +113,13 @@ func WithDataDir(dataDir string) P2PRouterOption {
 	}
 }
 
+func WithIncludeImages(includeImages []string) P2PRouterOption {
+	return func(cfg *P2PRouterConfig) error {
+		cfg.IncludeImages = includeImages
+		return nil
+	}
+}
+
 var _ Router = &P2PRouter{}
 
 type P2PRouter struct {
@@ -114,6 +128,11 @@ type P2PRouter struct {
 	kdht         *dht.IpfsDHT
 	rd           *routing.RoutingDiscovery
 	registryPort uint16
+	// Used exclusively by handleKeyRequest to return current local keys
+	localKeysProvider func(ctx context.Context) (string, error)
+	// For processing peer addresses in conjunction with the peer index key implementation (e.g., map the resolved net address to remote peer id)
+	peerIDByAddr map[netip.AddrPort]peer.ID
+	mxPeerIDs	 sync.RWMutex
 }
 
 func NewP2PRouter(ctx context.Context, addr string, bs Bootstrapper, registryPortStr string, opts ...P2PRouterOption) (*P2PRouter, error) {
@@ -190,13 +209,21 @@ func NewP2PRouter(ctx context.Context, addr string, bs Bootstrapper, registryPor
 	}
 	rd := routing.NewRoutingDiscovery(kdht)
 
-	return &P2PRouter{
-		bootstrapper: bs,
-		host:         host,
-		kdht:         kdht,
-		rd:           rd,
-		registryPort: uint16(registryPort),
-	}, nil
+	// Initialising the P2PRouter with elements related to peer discovery
+	r := &P2PRouter {
+		bootstrapper:		bs,
+		host:				host,
+		kdht:				kdht,
+		rd:					rd,
+		registryPort:		uint16(registryPort),
+		peerIDByAddr:		make(map[netip.AddrPort]peer.ID),
+		localKeysProvider:	nil,
+	}
+
+	// Set the inbound handler for peer key exchange as without it the peers connot communicate with each other directly
+	host.SetStreamHandler(KeyExchangeProtocol, r.handleKeyRequest)
+
+	return r, nil
 }
 
 func (r *P2PRouter) Run(ctx context.Context) (err error) {
@@ -266,6 +293,48 @@ func (r *P2PRouter) Resolve(ctx context.Context, key string, count int) (<-chan 
 	addrInfoCh := r.rd.FindProvidersAsync(ctx, c, count)
 	peerCh := make(chan netip.AddrPort, peerBufferSize)
 
+	// Special case implementation for specifically resolving peer index key, accepting multiple addresses per provider
+	if key == PeerIndexKey {
+		go func() {
+			resolveTimer := prometheus.NewTimer(metrics.ResolveDurHistogram.WithLabelValues("libp2p"))
+			for addrInfo := range addrInfoCh {
+				resolveTimer.ObserveDuration()
+
+				// Go through all reported addresses
+				for _, maddr := range addrInfo.Addrs {
+					ip, err := manet.ToIP(maddr)
+					if err != nil {
+						log.Error(
+							err, 
+							"could not get ip address")
+						continue
+					}
+					ipAddr, ok := netip.AddrFromSlice(ip)
+					if !ok {
+						log.Error(
+							errors.New("ip is not based on ipv4 or ipv6"), 
+							"could not convert ip")
+						continue
+					}
+					ap := netip.AddrPortFrom(ipAddr, r.registryPort)
+
+					// Record mapping of address to relevant peer id
+					r.mxPeerIDs.Lock()
+					r.peerIDByAddr[ap] = addrInfo.ID
+					r.mxPeerIDs.Unlock()
+
+					select {
+					case peerCh <- ap:
+					default:
+						log.V(4).Info("peer index: dropped peer, channel full")
+					}
+				}
+			}
+			close(peerCh)
+		}()
+		return peerCh, nil
+	}
+
 	go func() {
 		defer close(peerCh)
 		resolveTimer := prometheus.NewTimer(metrics.ResolveDurHistogram.WithLabelValues("libp2p"))
@@ -319,7 +388,6 @@ func (r *P2PRouter) Resolve(ctx context.Context, key string, count int) (<-chan 
 }
 
 func (r *P2PRouter) Advertise(ctx context.Context, keys []string) error {
-	logr.FromContextOrDiscard(ctx).V(4).Info("advertising keys", "host", r.host.ID().String(), "keys", keys)
 	for _, key := range keys {
 		c, err := createCid(key)
 		if err != nil {
@@ -332,6 +400,84 @@ func (r *P2PRouter) Advertise(ctx context.Context, keys []string) error {
 	}
 	return nil
 }
+
+// Used to serve information about local keys to other peers
+func (r *P2PRouter) ServeKeys(ctx context.Context, data string) error {
+	logr.FromContextOrDiscard(ctx).Info("serving information about local keys as a json string representation to other peers", 
+		"length", len(data))
+
+	r.localKeysProvider = func(_ context.Context) (string, error) {
+		return data, nil
+	}
+	
+	return nil
+}
+
+// Fetches keys from a peer discovered via Resolve(PeerIndexKey, ...)
+func (r *P2PRouter) FetchPeerKeys(ctx context.Context, peerAddr netip.AddrPort) (string, error) {
+	log := logr.FromContextOrDiscard(ctx).WithValues("peer", peerAddr)
+
+	// Look up the peer by its id detected during Resolve(PeerIndexKey, ...)
+	r.mxPeerIDs.RLock()
+	pid, ok := r.peerIDByAddr[peerAddr]
+	r.mxPeerIDs.RUnlock()
+	if !ok {
+		return "", fmt.Errorf(
+			"unknown peer id for %v; ensure Resolve(%q, ...) ran first", 
+			peerAddr, 
+			PeerIndexKey)
+	}
+
+	// Build a dialable address information data structure with the resolved ip/port and the known peer identifier
+	maddr, err := ma.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", peerAddr.Addr().String(), peerAddr.Port()))
+
+	if err != nil {
+		return "", err
+	}
+
+	pai := peer.AddrInfo{ID: pid, Addrs: []ma.Multiaddr{maddr}}
+
+	if err := r.host.Connect(ctx, pai); err != nil {
+		return "", err
+	}
+
+	s, err := r.host.NewStream(ctx, pid, KeyExchangeProtocol)
+	
+	if err != nil {
+		return "", err
+	}
+	
+	defer s.Close()
+
+	jsonData, err := io.ReadAll(s)
+	
+	if err != nil {
+		return "", fmt.Errorf(
+			"failed to read json data from stream: %w", 
+			err)
+	}
+
+	log.Info("fetched peer keys", "length", len(jsonData))
+	return string(jsonData), nil
+}
+
+// Special key request handler
+func (r * P2PRouter) handleKeyRequest(s network.Stream) {
+	defer s.Close()
+	if r.localKeysProvider == nil {
+		_, _ = s.Write([]byte("[]"))
+		return
+	}
+	keys, err := r.localKeysProvider(context.Background())
+	if err != nil {
+		_, _ = s.Write([]byte("[]"))
+		return
+	}
+
+	_, _ = s.Write([]byte(keys))
+}
+
+
 
 func bootstrapFunc(ctx context.Context, bootstrapper Bootstrapper, h host.Host) func() []peer.AddrInfo {
 	log := logr.FromContextOrDiscard(ctx).WithName("p2p")
