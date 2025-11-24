@@ -27,7 +27,8 @@ end = time.time()
 log_time("Import flask", start, end)
 
 # Step 2: Load tokenizer, be mindful of the model path if you use git clone then the path will be different.
-model_dir = "/app/DeepSeek-R1-Distill-Llama-8B/snapshots/6a6f4aa4197940add57724a7707d069478df56b1"
+#model_dir = "/app/DeepSeek-R1-Distill-Llama-8B/snapshots/6a6f4aa4197940add57724a7707d069478df56b1"
+model_dir = "/app/Qwen--Qwen3-4B-Instruct-2507/snapshots/cdbee75f17c01a7cc42f958dc650907174af0554"
 start = time.time()
 tokenizer = AutoTokenizer.from_pretrained(model_dir)
 end = time.time()
@@ -76,8 +77,5 @@ with open(csv_file, mode='w', newline='') as f:
     writer.writerows(timing_data)
 
 print(f"Timing data saved to {csv_file}")
-# export http_proxy=http://7.151.7.216:3128
-# export https_proxy=http://7.151.7.216:3128
-
 while True:
     time.sleep(3600)

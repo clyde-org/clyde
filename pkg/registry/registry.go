@@ -161,14 +161,19 @@ func (r *Registry) Server(addr string) (*http.Server, error) {
 	m.Handle("GET /v2/", r.registryHandler)
 	m.Handle("HEAD /v2/", r.registryHandler)
 
-	m.Handle("GET /simple/", r.pipClient.PipRegistryHandler)
-	m.Handle("HEAD /simple/", r.pipClient.PipRegistryHandler)
+	// Only register Pip routes if pipClient is not nil
+	if r.pipClient != nil {
+		m.Handle("GET /simple/", r.pipClient.PipRegistryHandler)
+		m.Handle("HEAD /simple/", r.pipClient.PipRegistryHandler)
+		m.Handle("GET /packages/", r.pipClient.PipRegistryHandler)
+		m.Handle("HEAD /packages/", r.pipClient.PipRegistryHandler)
+	}
 
-	m.Handle("GET /packages/", r.pipClient.PipRegistryHandler)
-	m.Handle("HEAD /packages/", r.pipClient.PipRegistryHandler)
-
-	m.Handle("GET /huggingface/", r.hfClient.HuggingFaceRegistryHandler)
-	m.Handle("HEAD /huggingface/", r.hfClient.HuggingFaceRegistryHandler)
+	// Only register HF routes if hfClient is not nil
+	if r.hfClient != nil {
+		m.Handle("GET /huggingface/", r.hfClient.HuggingFaceRegistryHandler)
+		m.Handle("HEAD /huggingface/", r.hfClient.HuggingFaceRegistryHandler)
+	}
 
 	srv := &http.Server{
 		Addr:    addr,

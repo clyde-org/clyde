@@ -21,18 +21,17 @@
 go.work
 
 sir_soci
-sir_apull
-workloads/clyde_apull/certs
-workloads/clyde_apull/Llama-2-7b-chat-hf
-workloads/clyde_apull/Llama-3.2-1B
-workloads/clyde_apull/logs
 .DS_Store
 workloads/.DS_Store
-workloads/clyde_apull/DeepSeek-R1-Distill-Llama-8B/
 workloads/image_pull/DeepSeek-R1-Distill-Llama-8B/
+workloads/clyde_nydus/DeepSeek-R1-Distill-Llama-8B/
+charts/clyde/*.tgz
+workloads/clyde_nydus/Qwen--Qwen3-4B-Instruct-2507
 # Added by goreleaser init:
 dist/
 secret/
 
 logs
 log*.log
+
+tools/seeding/__pycache__

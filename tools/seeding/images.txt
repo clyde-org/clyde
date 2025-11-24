@@ -1,6 +1,6 @@
-#7.212.124.4:30443/p2p/5gb:v1-arm64
-#7.212.124.4:30443/p2p/15gb:v1-arm64
-#7.212.124.4:30443/p2p/30gb:v1-arm64
-#7.212.124.4:30443/p2p/vllm-ascend:v0.7.3rc2
-#7.212.124.4:30443/p2p/nvidia-cuda-12.2.0-devel-ubuntu20.04:v1
-7.212.124.4:30443/p2p/llama2-pytorch-step-test:1.1
+ghcr.io/clyde-org/clyde-multi:v1.2
+ghcr.io/clyde-org/clyde.nydus:v1.0
+ghcr.io/clyde-org/clyde:v3.7
+ghcr.io/clyde-org/pip.exp:v1.2
+ghcr.io/clyde-org/hf.exp:v1.1
+ghcr.io/clyde-org/deepseek.r1.distill.llama.8b:v7.1

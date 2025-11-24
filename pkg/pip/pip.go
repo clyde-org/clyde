@@ -182,14 +182,6 @@ func (p *PipClient) PipRegistryHandler(rw mux.ResponseWriter, req *http.Request)
 	// ==== FALLBACK TO UPSTREAM ====
 	p.Log.Info("falling back to upstream index/artifact", "name", name, "isArtifact", isArtifact, "isIndex", isIndex)
 	p.serveFromFallback(rw, req, name, isIndex, isArtifact, trimmedPath)
-
-	// Advertise after fallback caching
-	// if isArtifact && (strings.HasSuffix(name, ".whl") || strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".metadata")) {
-	// 	go p.cacheAndAdvertise(context.Background(), name, "", false)
-	// } else if isIndex {
-	// 	go p.cacheAndAdvertise(context.Background(), name, "", true)
-	// }
-
 	p.Log.Info("request completed via fallback", "duration", time.Since(start))
 }
 
@@ -390,7 +382,7 @@ func (p *PipClient) forwardRequest(req *http.Request, rw http.ResponseWriter, pe
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, resp.Body)
 		p.Log.Error(nil, "unexpected peer status", "peer", peerAddr, "status", resp.Status, "package", name)
 		return fmt.Errorf("unexpected peer status: %s", resp.Status)
 	}
@@ -444,65 +436,6 @@ func (p *PipClient) forwardRequest(req *http.Request, rw http.ResponseWriter, pe
 	}
 
 	return nil
-}
-
-// ==== LOCAL SERVING ====
-func (p *PipClient) serveLocalWheel(rw http.ResponseWriter, req *http.Request, name string) bool {
-	cacheFile := filepath.Join(p.PipCacheDir, name)
-	p.Log.Info("checking local wheel cache", "file", cacheFile)
-
-	if _, err := os.Stat(cacheFile); err == nil {
-		p.Log.Info("found cached wheel, serving to client", "file", cacheFile)
-		if err := func() error {
-			// Wrap in func to log errors from ServeFile
-			defer func() { p.Log.Info("finished serving cached wheel", "file", cacheFile) }()
-			http.ServeFile(rw, req, cacheFile)
-			return nil
-		}(); err != nil {
-			p.Log.Error(err, "error while serving cached wheel", "file", cacheFile)
-		}
-		return true
-	}
-
-	p.Log.Info("local wheel not found", "file", cacheFile)
-	return false
-}
-
-func (p *PipClient) serveLocalIndex(rw http.ResponseWriter, req *http.Request, pkg string) bool {
-	cacheDir := filepath.Join(p.PipCacheDir)
-	p.Log.Info("building local index from cached wheels", "package", pkg, "cacheDir", cacheDir)
-
-	entries, err := os.ReadDir(cacheDir)
-	if err != nil {
-		p.Log.Error(err, "failed to read cache directory", "dir", cacheDir)
-		return false
-	}
-
-	var links []string
-	for _, e := range entries {
-		lowerName := strings.ToLower(e.Name())
-		if strings.HasPrefix(lowerName, strings.ToLower(pkg)+"-") &&
-			(strings.HasSuffix(lowerName, ".whl") || strings.HasSuffix(lowerName, ".tar.gz")) {
-			links = append(links, fmt.Sprintf(`<a href="%s">%s</a>`, e.Name(), e.Name()))
-			p.Log.Info("adding wheel to local index", "file", e.Name())
-		}
-	}
-
-	if len(links) == 0 {
-		p.Log.Info("no cached wheels found for package, cannot serve index", "package", pkg)
-		return false
-	}
-
-	indexHTML := strings.Join(links, "\n")
-	rw.Header().Set("Content-Type", "text/html")
-	rw.WriteHeader(http.StatusOK)
-	_, err = rw.Write([]byte(indexHTML))
-	if err != nil {
-		p.Log.Error(err, "failed to write index HTML", "package", pkg)
-	} else {
-		p.Log.Info("served local index successfully", "package", pkg, "count", len(links))
-	}
-	return true
 }
 
 func copyHeader(dst, src http.Header) {

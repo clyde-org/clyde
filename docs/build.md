@@ -6,10 +6,13 @@ This guide describes how to build Clyde from source, create container images for
 
 ## 1. Prerequisites
 
+You would need the following packages to get started:
+
 * Go installed
 * Docker installed (with `buildx` recommended for multi-arch builds)
-* Make & GoReleaser installed
-* Kubernetes cluster & Helm installed
+* Make
+* Other tools including `goreleaser` and `golangci-lint`
+* Cluster admin tools including `kubectl` and `helm`
 
 Clone the code:
 
@@ -30,11 +33,19 @@ make build
 sudo make build-image
 
 # Tag and push (replace with actual registry and version)
-docker tag clyde:<commit-sha> <REGISTRY>/clyde:v15.0
-docker push <REGISTRY>/clyde:v15.0
+docker tag clyde:<commit-sha> <REGISTRY>/clyde:v1.0
+docker push <REGISTRY>/clyde-multi:v1.0
 ```
 
 > This will produce multi-arch binaries under `dist/` and a single multi-architecture container image that supports both AMD64 and ARM64.
+
+### Optional push package to OCI registry
+
+```bash
+cd charts/clyde
+helm package .
+helm push clyde-v1.0.tgz  oci://ghcr.io/clyde-org/charts
+```
 
 ---
 

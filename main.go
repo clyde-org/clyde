@@ -145,6 +145,8 @@ func run(ctx context.Context, args *Arguments) error {
 		return pipConfigurationCommand(ctx, args.PipConfiguration)
 	case args.HFConfiguration != nil:
 		return hfConfigurationCommand(ctx, args.HFConfiguration)
+	case args.CleanupWait != nil:
+		return cleanupWaitCommand(ctx, args.CleanupWait)
 	default:
 		return errors.New("unknown subcommand")
 	}

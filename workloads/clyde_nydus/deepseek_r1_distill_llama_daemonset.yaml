@@ -1,34 +1,26 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: hf-exp
+  name: deepseek-r1-distill-llama-8b
 spec:
   selector:
     matchLabels:
-      app: hf-exp
+      app: deepseek-r1-distill-llama-8b
   template:
     metadata:
       labels:
-        app: hf-exp
+        app: deepseek-r1-distill-llama-8b
     spec:
-      # Allow pods to run on control-plane nodes
+      # add this toleration for the 32 node cluster only
       tolerations:
         - key: "node-role.kubernetes.io/control-plane"
           operator: "Exists"
           effect: "NoSchedule"
-
       containers:
-        - name: hf-exp
-          image: ghcr.io/clyde-org/hf.exp:v1.1
+        - name: deepseek-r1-distill-llama-8b
+          #image: ghcr.io/clyde-org/clyde.nydus:v1.3
+          image: ghcr.io/clyde-org/clyde.nydus:v1.3-nydus
           imagePullPolicy: Always
-          volumeMounts:
-            - name: hf-cache
-              mountPath: /data/cache/hf/model
-
-      volumes:
-        - name: hf-cache
-          emptyDir: {}
-
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -37,7 +29,7 @@ spec:
                   - key: app
                     operator: In
                     values:
-                      - hf-exp
+                      - deepseek-r1-distill-llama-8b
               topologyKey: "kubernetes.io/hostname"
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -46,28 +38,25 @@ spec:
                   - key: kubernetes.io/hostname
                     operator: In
                     values:
-                      - master-14-ascd
-                      - master-16
-                      - master-17
-                      - master-19
-                      - master-20
-                      - master-22
-                      - worker-10
-                      - worker-11
-                      - worker-12
+                      - worker-14
+                      - worker-15
+                      - worker-16
+                      - worker-17
+                      - worker-18
+                      - worker-19
+                      - worker-20
+                      - worker-21
+                      - worker-22
                       - worker-23
                       - worker-24
                       - worker-25
-                      - worker-26
-                      - worker-27
-                      - worker-28
-                      - worker-29
                       - worker-30
                       - worker-31
                       - worker-32
                       - worker-33
                       - worker-34
                       - worker-35
+                      - worker-36
                       - worker-37
                       - worker-38
                       - worker-39
