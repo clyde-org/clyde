@@ -1,0 +1,1014 @@
+diff --git a/charts/clyde/Chart.yaml b/charts/clyde/Chart.yaml
+index bc6492f..afd9b83 100644
+--- a/charts/clyde/Chart.yaml
++++ b/charts/clyde/Chart.yaml
+@@ -2,8 +2,8 @@ apiVersion: v2
+ name: clyde
+ description: Stateless cluster local OCI registry mirror.
+ type: application
+-version: v1.1 # this is for helm, e.g. change this if you change chart logic. For remote helm you can use helm --version flag to overide this.
+-appVersion: v1.2 # tag of the image in repository, update this when the tag change or you can update the tag values.yaml in image.tag
++version: v1.0 # this is for helm, e.g. change this if you change chart logic. For remote helm you can use helm --version flag to overide this.
++appVersion: v54.0 # tag of the image in repository, update this when the tag change or you can update the tag values.yaml in image.tag
+ annotations:
+   artifacthub.io/category: "integration-delivery"
+   artifacthub.io/license: "MIT"
+diff --git a/charts/clyde/clyde-values.yml b/charts/clyde/clyde-values.yml
+index be52c2d..8c344ff 100644
+--- a/charts/clyde/clyde-values.yml
++++ b/charts/clyde/clyde-values.yml
+@@ -2,6 +2,7 @@ clyde:
+   logLevel: "INFO"
+   containerdContentPath: "/var/lib/containerd/io.containerd.content.v1.content"
+   debugWebEnabled: true
++  includeImages: []
+ 
+ serviceMonitor:
+   # -- If true creates a Prometheus Service Monitor.
+diff --git a/charts/clyde/templates/daemonset.yaml b/charts/clyde/templates/daemonset.yaml
+index 812586f..bbf6d38 100644
+--- a/charts/clyde/templates/daemonset.yaml
++++ b/charts/clyde/templates/daemonset.yaml
+@@ -140,6 +140,7 @@ spec:
+           {{- end }}
+           - --debug-web-enabled={{ .Values.clyde.debugWebEnabled }}
+           - --enable-pip-proxy={{ .Values.clyde.enablePipProxy }}
++          - --include-images={{ .Values.clyde.includeImages }}
+         env:
+         {{- if ((.Values.resources).limits).cpu }}
+         - name: GOMAXPROCS
+@@ -191,7 +192,7 @@ spec:
+           {{- with .Values.clyde.containerdContentPath }}
+           - name: containerd-content
+             mountPath: {{ . }}
+-            readOnly: true
++            readOnly: false
+           {{- end }}
+           - name: pip-cache-dir
+             mountPath: {{ .Values.pip.pipCacheDir }}
+diff --git a/charts/clyde/values.yaml b/charts/clyde/values.yaml
+index 66fc4bf..ea880d2 100644
+--- a/charts/clyde/values.yaml
++++ b/charts/clyde/values.yaml
+@@ -166,6 +166,8 @@ clyde:
+   debugWebEnabled: false
+   # -- Whether to enable PIP proxy
+   enablePipProxy: true
++  includeImages: []
++  
+ 
+ pip:
+   # -- Path to the pip configuration file
+diff --git a/docs/p2p_automatic_discovery.md b/docs/p2p_automatic_discovery.md
+new file mode 100644
+index 0000000..eceae96
+--- /dev/null
++++ b/docs/p2p_automatic_discovery.md
+@@ -0,0 +1,31 @@
++# Peer-to-peer Discovery, and Automatic Content Distribution
++
++This is an experimental feature that aims to improve content distribution and retrieval across peers. This is acheived by implementing the ability for peers to discover each other and automatically share specific container image content.
++
++## Discovery
++
++Peers advertise their presence to a global peer index. For example, an arbitrary peer advertises its own endpoint address to a pre-known key that can be resolved by other peers, allowing them to obtain the endpoint address. New peers joining the network will automatically advertise for their presence using the peer index and will be discoverable also by other peers. This discovery mechanism is implemented within a periodic synchronisation operation that is performed by each peer for a pre-configured duration.
++
++## Router Interface 
++
++The peer-to-peer router interface has been extended to provide additional APIs, these include ServeKeys and FetchPeerKeys which support direct requests from peers.
++
++- Serving Requests: Metadata can be requested from peers to obtain clues about the container image contents they maintain. For example, an arbitrary peer can invoke ServeKeys from a remote peer to retrieve such metadata (e.g., container images and associated layers). The response from the remote peer will be returned in a JSON-formatted message. Typically, serve requests are performed during periodic synchronisation mechanisms after peers have discovered their presence in order to obtain clues about the data they provide.
++
++- Fetch Requests: An arbitrary peer can invoke FetchPeerKeys from a remote peer to obtain specific content (e.g., a container image layer or blob). Once the data has been recieved, it is then stored directly on the node at the default location where container images are maintained for example. Typically, fetch requests are performed by a peer that intends to retrieve a specific content form a remote peer after it has identified that such content is missing from its local storage.
++
++## Parallel Downloads
++
++- Some go routines have been implemented to enable a peer to obtain multiple layers or blobs related to a specific container image from different peers, which may be identified as peers that provide such content. Some components have been introduced to enable this behaviour in the system.
++
++## Workflow
++
++The following steps describe the behaviour of this experimental feature:
++
++1. Peer presence advertisement: Peer 1 advertises its own address to a global peer index.
++2. Peer discovery: Peer 2 will resolve the global peer index obtaining the endpoint address of peer 1 and any other peers in the network.
++3. Metadata is requested from peers about the content they can provide. For example, peer 1 invokes peer 2 to get such metadata.
++4. Peer 2 responds to peer 1 by returning a json-formatted string containing the metadata, and in turn peer 1 analyses the data received.
++5. Peer 1 determines what is missing from its local storage (e.g., images, blobs) and identifies a number of potential peers that provide these layers, selects these peers (e.g., peer 2) and invokes them. 
++6. Peer 2 returns the image blob that was requested by peer 1.
++7. Upon obtaining the image blob from peer 2, peer 1 stores this content in its default local storage.
+diff --git a/main.go b/main.go
+index 270c2aa..acf9542 100644
+--- a/main.go
++++ b/main.go
+@@ -63,6 +63,7 @@ type RegistryCmd struct {
+ 	MirrorResolveRetries         int           `arg:"--mirror-resolve-retries,env:MIRROR_RESOLVE_RETRIES" default:"3" help:"Max amount of mirrors to attempt."`
+ 	ResolveLatestTag             bool          `arg:"--resolve-latest-tag,env:RESOLVE_LATEST_TAG" default:"true" help:"When true latest tags will be resolved to digests."`
+ 	DebugWebEnabled              bool          `arg:"--debug-web-enabled,env:DEBUG_WEB_ENABLED" default:"false" help:"When true enables debug web page."`
++	IncludeImages				 []string	   `arg:"--include-images,env:INCLUDE_IMAGES" help:"List of images to include and the system would look for and download automatically."`
+ 
+ 	// pip specific settings
+ 	EnablePipProxy   bool   `arg:"--enable-pip-proxy,env:ENABLE_PIP_PROXY" default:"false" help:"Enable pip proxy endpoint"`
+@@ -210,6 +211,7 @@ func registryCommand(ctx context.Context, args *RegistryCmd) (err error) {
+ 	}
+ 	routerOpts := []routing.P2PRouterOption{
+ 		routing.WithDataDir(args.DataDir),
++		routing.WithIncludeImages(args.IncludeImages),
+ 	}
+ 	router, err := routing.NewP2PRouter(ctx, args.RouterAddr, bootstrapper, registryPort, routerOpts...)
+ 	if err != nil {
+@@ -241,7 +243,7 @@ func registryCommand(ctx context.Context, args *RegistryCmd) (err error) {
+ 
+ 	// State tracking
+ 	g.Go(func() error {
+-		err := state.Track(ctx, ociClient, router, args.ResolveLatestTag, pipClient, hfClient)
++		err := state.Track(ctx, ociClient, router, args.ResolveLatestTag, pipClient, hfClient, args.IncludeImages, args.ContainerdContentPath)
+ 		if err != nil {
+ 			return err
+ 		}
+diff --git a/pkg/routing/memory.go b/pkg/routing/memory.go
+index b79126f..92a18ad 100644
+--- a/pkg/routing/memory.go
++++ b/pkg/routing/memory.go
+@@ -12,6 +12,7 @@ var _ Router = &MemoryRouter{}
+ type MemoryRouter struct {
+ 	resolver map[string][]netip.AddrPort
+ 	self     netip.AddrPort
++	selfKeys string
+ 	mx       sync.RWMutex
+ }
+ 
+@@ -56,6 +57,26 @@ func (m *MemoryRouter) Advertise(ctx context.Context, keys []string) error {
+ 	return nil
+ }
+ 
++func (m *MemoryRouter) ServeKeys(ctx context.Context, keys string) error {
++	m.mx.Lock()
++	m.selfKeys = keys
++	m.mx.Unlock()
++
++	return nil
++}
++
++func (m *MemoryRouter) FetchPeerKeys(ctx context.Context, peer netip.AddrPort) (string, error) {
++	m.mx.RLock()
++	defer m.mx.RUnlock()
++
++	if peer == m.self {
++		return m.selfKeys, nil;
++	}
++	// The implementation doesn't keep the keys of other peers but it's a required stub, hence returning an empty array
++	empty := "[]"
++	return empty, nil
++}
++
+ func (m *MemoryRouter) Add(key string, ap netip.AddrPort) {
+ 	m.mx.Lock()
+ 	defer m.mx.Unlock()
+diff --git a/pkg/routing/p2p.go b/pkg/routing/p2p.go
+index 5ab4c0c..fd0ed4c 100644
+--- a/pkg/routing/p2p.go
++++ b/pkg/routing/p2p.go
+@@ -15,6 +15,8 @@ import (
+ 	"strconv"
+ 	"strings"
+ 	"time"
++	"io"
++	"sync"
+ 
+ 	"clyde/pkg/metrics"
+ 
+@@ -32,11 +34,10 @@ import (
+ 	mc "github.com/multiformats/go-multicodec"
+ 	mh "github.com/multiformats/go-multihash"
+ 	"github.com/prometheus/client_golang/prometheus"
+-	"github.com/spf13/afero" // Using afero filesystem abstraction package
++	"github.com/spf13/afero"
++	"github.com/libp2p/go-libp2p/core/network"
+ )
+ 
+-// Implementation of in-memory file system mapping
+-
+ // FileSystem interface defines methods that abstract over conventional file operations
+ type FileSystem interface {
+ 	MkdirAll(path string, perm os.FileMode) error
+@@ -71,11 +72,17 @@ func (ims *InMemoryFileSystem) ReadFile(path string) ([]byte, error) {
+ 	return afero.ReadFile(ims.fs, path)
+ }
+ 
+-const KeyTTL = 10 * time.Minute
++const (
++	// KeyTTL is a timeslice used in the passive synchronisation mechanism within the state tracker
++	KeyTTL = 2 * time.Minute
++	// KeyExchangeProtocol is used for direct interaction between peers
++	KeyExchangeProtocol = "/clyde/keys/1.0.0"
++)
+ 
+ type P2PRouterConfig struct {
+ 	DataDir    string
+ 	Libp2pOpts []libp2p.Option
++	IncludeImages []string
+ }
+ 
+ func (cfg *P2PRouterConfig) Apply(opts ...P2PRouterOption) error {
+@@ -106,6 +113,13 @@ func WithDataDir(dataDir string) P2PRouterOption {
+ 	}
+ }
+ 
++func WithIncludeImages(includeImages []string) P2PRouterOption {
++	return func(cfg *P2PRouterConfig) error {
++		cfg.IncludeImages = includeImages
++		return nil
++	}
++}
++
+ var _ Router = &P2PRouter{}
+ 
+ type P2PRouter struct {
+@@ -114,6 +128,11 @@ type P2PRouter struct {
+ 	kdht         *dht.IpfsDHT
+ 	rd           *routing.RoutingDiscovery
+ 	registryPort uint16
++	// Used exclusively by handleKeyRequest to return current local keys
++	localKeysProvider func(ctx context.Context) (string, error)
++	// For processing peer addresses in conjunction with the peer index key implementation (e.g., map the resolved net address to remote peer id)
++	peerIDByAddr map[netip.AddrPort]peer.ID
++	mxPeerIDs	 sync.RWMutex
+ }
+ 
+ func NewP2PRouter(ctx context.Context, addr string, bs Bootstrapper, registryPortStr string, opts ...P2PRouterOption) (*P2PRouter, error) {
+@@ -190,13 +209,21 @@ func NewP2PRouter(ctx context.Context, addr string, bs Bootstrapper, registryPor
+ 	}
+ 	rd := routing.NewRoutingDiscovery(kdht)
+ 
+-	return &P2PRouter{
+-		bootstrapper: bs,
+-		host:         host,
+-		kdht:         kdht,
+-		rd:           rd,
+-		registryPort: uint16(registryPort),
+-	}, nil
++	// Initialising the P2PRouter with elements related to peer discovery
++	r := &P2PRouter {
++		bootstrapper:		bs,
++		host:				host,
++		kdht:				kdht,
++		rd:					rd,
++		registryPort:		uint16(registryPort),
++		peerIDByAddr:		make(map[netip.AddrPort]peer.ID),
++		localKeysProvider:	nil,
++	}
++
++	// Set the inbound handler for peer key exchange as without it the peers connot communicate with each other directly
++	host.SetStreamHandler(KeyExchangeProtocol, r.handleKeyRequest)
++
++	return r, nil
+ }
+ 
+ func (r *P2PRouter) Run(ctx context.Context) (err error) {
+@@ -266,6 +293,48 @@ func (r *P2PRouter) Resolve(ctx context.Context, key string, count int) (<-chan
+ 	addrInfoCh := r.rd.FindProvidersAsync(ctx, c, count)
+ 	peerCh := make(chan netip.AddrPort, peerBufferSize)
+ 
++	// Special case implementation for specifically resolving peer index key, accepting multiple addresses per provider
++	if key == PeerIndexKey {
++		go func() {
++			resolveTimer := prometheus.NewTimer(metrics.ResolveDurHistogram.WithLabelValues("libp2p"))
++			for addrInfo := range addrInfoCh {
++				resolveTimer.ObserveDuration()
++
++				// Go through all reported addresses
++				for _, maddr := range addrInfo.Addrs {
++					ip, err := manet.ToIP(maddr)
++					if err != nil {
++						log.Error(
++							err, 
++							"could not get ip address")
++						continue
++					}
++					ipAddr, ok := netip.AddrFromSlice(ip)
++					if !ok {
++						log.Error(
++							errors.New("ip is not based on ipv4 or ipv6"), 
++							"could not convert ip")
++						continue
++					}
++					ap := netip.AddrPortFrom(ipAddr, r.registryPort)
++
++					// Record mapping of address to relevant peer id
++					r.mxPeerIDs.Lock()
++					r.peerIDByAddr[ap] = addrInfo.ID
++					r.mxPeerIDs.Unlock()
++
++					select {
++					case peerCh <- ap:
++					default:
++						log.V(4).Info("peer index: dropped peer, channel full")
++					}
++				}
++			}
++			close(peerCh)
++		}()
++		return peerCh, nil
++	}
++
+ 	go func() {
+ 		defer close(peerCh)
+ 		resolveTimer := prometheus.NewTimer(metrics.ResolveDurHistogram.WithLabelValues("libp2p"))
+@@ -319,7 +388,6 @@ func (r *P2PRouter) Resolve(ctx context.Context, key string, count int) (<-chan
+ }
+ 
+ func (r *P2PRouter) Advertise(ctx context.Context, keys []string) error {
+-	logr.FromContextOrDiscard(ctx).V(4).Info("advertising keys", "host", r.host.ID().String(), "keys", keys)
+ 	for _, key := range keys {
+ 		c, err := createCid(key)
+ 		if err != nil {
+@@ -333,6 +401,84 @@ func (r *P2PRouter) Advertise(ctx context.Context, keys []string) error {
+ 	return nil
+ }
+ 
++// Used to serve information about local keys to other peers
++func (r *P2PRouter) ServeKeys(ctx context.Context, data string) error {
++	logr.FromContextOrDiscard(ctx).Info("serving information about local keys as a json string representation to other peers", 
++		"length", len(data))
++
++	r.localKeysProvider = func(_ context.Context) (string, error) {
++		return data, nil
++	}
++	
++	return nil
++}
++
++// Fetches keys from a peer discovered via Resolve(PeerIndexKey, ...)
++func (r *P2PRouter) FetchPeerKeys(ctx context.Context, peerAddr netip.AddrPort) (string, error) {
++	log := logr.FromContextOrDiscard(ctx).WithValues("peer", peerAddr)
++
++	// Look up the peer by its id detected during Resolve(PeerIndexKey, ...)
++	r.mxPeerIDs.RLock()
++	pid, ok := r.peerIDByAddr[peerAddr]
++	r.mxPeerIDs.RUnlock()
++	if !ok {
++		return "", fmt.Errorf(
++			"unknown peer id for %v; ensure Resolve(%q, ...) ran first", 
++			peerAddr, 
++			PeerIndexKey)
++	}
++
++	// Build a dialable address information data structure with the resolved ip/port and the known peer identifier
++	maddr, err := ma.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", peerAddr.Addr().String(), peerAddr.Port()))
++
++	if err != nil {
++		return "", err
++	}
++
++	pai := peer.AddrInfo{ID: pid, Addrs: []ma.Multiaddr{maddr}}
++
++	if err := r.host.Connect(ctx, pai); err != nil {
++		return "", err
++	}
++
++	s, err := r.host.NewStream(ctx, pid, KeyExchangeProtocol)
++	
++	if err != nil {
++		return "", err
++	}
++	
++	defer s.Close()
++
++	jsonData, err := io.ReadAll(s)
++	
++	if err != nil {
++		return "", fmt.Errorf(
++			"failed to read json data from stream: %w", 
++			err)
++	}
++
++	log.Info("fetched peer keys", "length", len(jsonData))
++	return string(jsonData), nil
++}
++
++// Special key request handler
++func (r * P2PRouter) handleKeyRequest(s network.Stream) {
++	defer s.Close()
++	if r.localKeysProvider == nil {
++		_, _ = s.Write([]byte("[]"))
++		return
++	}
++	keys, err := r.localKeysProvider(context.Background())
++	if err != nil {
++		_, _ = s.Write([]byte("[]"))
++		return
++	}
++
++	_, _ = s.Write([]byte(keys))
++}
++
++
++
+ func bootstrapFunc(ctx context.Context, bootstrapper Bootstrapper, h host.Host) func() []peer.AddrInfo {
+ 	log := logr.FromContextOrDiscard(ctx).WithName("p2p")
+ 	return func() []peer.AddrInfo {
+diff --git a/pkg/routing/routing.go b/pkg/routing/routing.go
+index 78c3d92..2639272 100644
+--- a/pkg/routing/routing.go
++++ b/pkg/routing/routing.go
+@@ -13,4 +13,12 @@ type Router interface {
+ 	Resolve(ctx context.Context, key string, count int) (<-chan netip.AddrPort, error)
+ 	// Advertise broadcasts that the current router can serve the content.
+ 	Advertise(ctx context.Context, keys []string) error
++	// Fetches keys from a remote peer address discovered via calling Resolve(PeerIndexKey, ...)
++	FetchPeerKeys(ctx context.Context, peer netip.AddrPort) (string, error)
++	// Exposes the currently maintained local set of content keys (digests, etc.) of this peer
++	ServeKeys(ctx context.Context, data string) error
++
+ }
++
++// Well-known key used to advertise peer presence so that all peers can be found easily
++const PeerIndexKey = "__peer_index__"
+diff --git a/pkg/state/blobs.go b/pkg/state/blobs.go
+new file mode 100644
+index 0000000..a6b923c
+--- /dev/null
++++ b/pkg/state/blobs.go
+@@ -0,0 +1,209 @@
++package state
++
++import (
++	"context"
++	"strings"
++	"fmt"
++	"io"
++	"os"
++	"time"
++	"net/http"
++	"net/netip"
++	"path/filepath"
++	"encoding/json"
++	"github.com/go-logr/logr"
++	"github.com/opencontainers/go-digest"
++
++	"clyde/pkg/oci"
++)
++
++// Obtain local content (e.g., images and associated layers in addition to relevant information)
++func getLocalBlobs(ctx context.Context, ociClient oci.Client, includedImages []string) (string, map[string]struct{}, error) {
++	log := logr.FromContextOrDiscard(ctx)
++
++	// Use the default client to get the list of available images
++	imgs, err := ociClient.ListImages(ctx)
++	if err != nil {
++		return "", nil, err
++	}
++
++	imageLayers := make([]ImageLayers, 0)
++
++	for _, img := range imgs {
++
++		// Use default function to walk through the image content
++		dgsts, err := oci.WalkImage(ctx, ociClient, img)
++		if err != nil {
++			log.Error(err, "could not walk image", 
++				"image", img.String())
++			continue
++		}
++
++		ImageNameStr := img.String()
++
++		ImageTagStr := img.Tag
++
++		if isIncludedImage(ImageNameStr, includedImages) {
++			log.Info("Current image found locally is required in the inclusion list, processing it...")
++
++			// Process this image into an appropriate structure for sharing data about local content (e.g., name, digests, tag, registry) across distributed peers
++			imageLayers = append(imageLayers, ImageLayers {
++				ImageName: img.String(),
++				LayerKeys: dgsts,
++				Registry: img.Registry,
++				Tag: img.Tag,
++				Digest: img.Digest.String(),
++			})
++		} else {
++			log.Info("Excluding image tag", ImageNameStr, ImageTagStr)
++		}
++	}
++
++	// Return empty array if no content was found
++	if len(imageLayers) == 0 {
++		return "[]", nil, nil
++	}
++
++	// Construct data in json representation from local content that was processed
++	data, err := json.Marshal(imageLayers)
++	if err != nil {
++		return "", nil, fmt.Errorf("failed to marshal json data: %w", err)
++	}
++
++	// Process the keys into a key set that will be used for comparison logic in the state tracker
++	localKeySet := make(map[string]struct{})
++	var localImageLayers []map[string]interface{}
++	if string(data) != "" {
++		if err := json.Unmarshal([]byte(string(data)), &localImageLayers); err != nil {
++			return "", nil, err
++		}
++
++		for _, image := range localImageLayers {
++			if layers, ok := image["layer_keys"].([]interface{}); ok {
++				for _, layer := range layers {
++					if key, ok := layer.(string); ok {
++						localKeySet[key] = struct{}{}
++					}
++				}
++			}
++		}
++
++	}
++
++	// Return both the json formatted data as a string representation, and the local key set
++	return string(data), localKeySet, nil
++}
++
++
++func isIncludedImage(imageWithTag string, images []string) bool {
++	
++	if len(images) == 0 {
++		return false
++	}
++	
++	for _, image := range images {
++		if strings.Contains(imageWithTag, image) {
++			return true
++		}
++	}
++	return false
++}
++
++func checkBlobExists(dgst digest.Digest, ContainerdContentPath string) bool {
++	if dgst.Algorithm() == "" || dgst.Encoded() == "" {
++		return false
++	}
++
++	filePath := filepath.Join(ContainerdContentPath, "blobs", dgst.Algorithm().String(), dgst.Encoded())
++	_, err := os.Stat(filePath)
++	return err == nil
++}
++
++func fetchBlob(ctx context.Context, peer netip.AddrPort, registry, name string, dgst digest.Digest)(io.ReadCloser, error) {
++	log := logr.FromContextOrDiscard(ctx)
++
++	// The input parameter, name, has the format of imag@sha256:xxxx, so we process this string appropriately
++	parts := strings.SplitN(name, "@", 2)
++
++
++	// For blob requests, we should use the repository name without tag
++	repoWithTag := parts[0]
++	repoParts := strings.SplitN(repoWithTag, ":", 2)
++	repoName := repoParts[0]
++
++	// Constructing the url used for the http request from current parameters
++	url := fmt.Sprintf("http://%s/v2/%s/blobs/%s?ns=%s", peer.String(), repoName, dgst.String(), registry)
++
++	log.Info("attempting to fetch blob", "url", url, "digest", dgst.String())
++
++	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
++	if err != nil {
++		log.Error(err, "failed to create request")
++		return nil, err 
++	}
++	req.Header.Set("X-Clyde-Mirrored", "true")
++
++	// Set a time out, could fail if too short so give sufficient time for the remote peer to respond accordingly
++	client := &http.Client{Timeout: 60 * time.Second}
++	resp, err := client.Do(req)
++	if err != nil {
++		log.Error(err, "http request failed")
++		return nil, err 
++	}
++	defer resp.Body.Close()
++
++	// Read the response body for better error messages
++	if resp.StatusCode != http.StatusOK {
++		log.Error(err, "blob fetch unsuccessful, will retry shortly...")
++		return nil, err
++	} else {
++		log.Info("successfully fetched blob",
++			"status",resp.Status,  
++			"digest", dgst.String())
++	}
++
++	return resp.Body, nil
++}
++
++
++
++// Writes the image layer/blob of a specific digest to the default path where local content is stored
++func writeBlobToLocalPath(r io.Reader, dgst digest.Digest, path string) error {
++	dst := filepath.Join(path, "blobs", dgst.Algorithm().String(), dgst.Encoded())
++
++	// Make sure that the path exists
++	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
++		return fmt.Errorf("mkdir: %w", err)
++	}
++
++	// House keeping activities
++	tmp := dst + ".tmp"
++	f, err := os.Create(tmp)
++	if err != nil {
++		return fmt.Errorf("create tmp: %w", err)
++	}
++
++	if _, err := io.Copy(f, r); err != nil {
++		_ = f.Close()
++		_ = os.Remove(tmp)
++		return fmt.Errorf("write blob: %w", err)
++	}
++
++	if err := f.Sync(); err != nil {
++		_ = f.Close()
++		_ = os.Remove(tmp)
++		return fmt.Errorf("sync: %w", err)
++	}
++
++	if err := f.Close(); err != nil {
++		_ = os.Remove(tmp)
++		return fmt.Errorf("close: %w", err)
++	}
++
++	if err := os.Rename(tmp, dst); err != nil {
++		_ = os.Remove(tmp)
++		return fmt.Errorf("rename: %w", err)
++	}
++
++	return nil
++}
+diff --git a/pkg/state/mutex.go b/pkg/state/mutex.go
+new file mode 100644
+index 0000000..ccbf617
+--- /dev/null
++++ b/pkg/state/mutex.go
+@@ -0,0 +1,23 @@
++package state
++
++import (
++	"sync"
++)
++
++var (
++	busyMu sync.Mutex
++	// Used as an indicator when content is being downloaded by any arbitrary worker
++	busy bool
++)
++
++func setBusy(v bool) {
++	busyMu.Lock()
++	busy = v
++	busyMu.Unlock()
++}
++
++func isBusy() bool {
++	busyMu.Lock()
++	defer busyMu.Unlock()
++	return busy
++}
+diff --git a/pkg/state/state.go b/pkg/state/state.go
+index 49e7f47..e81af82 100644
+--- a/pkg/state/state.go
++++ b/pkg/state/state.go
+@@ -16,7 +16,7 @@ import (
+ 	"clyde/pkg/routing"
+ )
+ 
+-func Track(ctx context.Context, ociClient oci.Client, router routing.Router, resolveLatestTag bool, pipClient pip.Pip, hfClient hf.Hf) error {
++func Track(ctx context.Context, ociClient oci.Client, router routing.Router, resolveLatestTag bool, pipClient pip.Pip, hfClient hf.Hf, includeImages []string, ContainerdContentPath string) error {
+ 	log := logr.FromContextOrDiscard(ctx)
+ 	eventCh, errCh, err := ociClient.Subscribe(ctx)
+ 	if err != nil {
+@@ -34,9 +34,19 @@ func Track(ctx context.Context, ociClient oci.Client, router routing.Router, res
+ 			return nil
+ 		case <-tickerCh:
+ 			log.Info("running scheduled state update of data artifacts")
+-			if err := all(ctx, ociClient, router, resolveLatestTag); err != nil {
+-				log.Error(err, "received errors when updating all images")
+-				continue
++
++			// Perform regular updates here by advertising for all content
++			if !isBusy() {
++				if err := all(ctx, ociClient, router, resolveLatestTag); err != nil {
++					log.Error(err, "received errors when updating all images")
++					// Continue with peer synchronisation anyway
++					continue
++				}
++
++				// Start synchronisation operation with remote peers for automatic peer discovery and content retrieval
++				if err := synchronise(ctx, ociClient, router, includeImages, ContainerdContentPath); err != nil {
++					log.Error(err, "peer sync failed")
++				}
+ 			}
+ 
+ 			// refresh pip keys
+@@ -67,7 +77,6 @@ func Track(ctx context.Context, ociClient oci.Client, router routing.Router, res
+ }
+ 
+ func all(ctx context.Context, ociClient oci.Client, router routing.Router, resolveLatestTag bool) error {
+-	log := logr.FromContextOrDiscard(ctx).V(4)
+ 	imgs, err := ociClient.ListImages(ctx)
+ 	if err != nil {
+ 		return err
+@@ -85,7 +94,6 @@ func all(ctx context.Context, ociClient oci.Client, router routing.Router, resol
+ 		// Handle the list re-sync as update events; this will also prevent the
+ 		// update function from setting metrics values.
+ 		event := oci.ImageEvent{Image: img, Type: oci.UpdateEvent}
+-		log.Info("sync image event", "image", event.Image.String(), "type", event.Type)
+ 		keyTotal, err := update(ctx, ociClient, router, event, skipDigests, resolveLatestTag)
+ 		if err != nil {
+ 			errs = append(errs, err)
+diff --git a/pkg/state/structs.go b/pkg/state/structs.go
+new file mode 100644
+index 0000000..00a327f
+--- /dev/null
++++ b/pkg/state/structs.go
+@@ -0,0 +1,21 @@
++package state
++
++// Structure used for tracking missing keys with their image context
++type KeySource struct {
++
++	// Note that this information to construct an http request to an arbitrary remote peer for retrieving container image content
++	PeerAddr string
++	ImageName string
++	Registry string
++}
++
++// Structure for holding data obtained from remote peers in json format to handle the processing of such data carefully
++type ImageLayers struct {
++
++	// Note that that this information is used to obtain clues (e.g., metadata about locally stored content) which may be provided to remote peers
++	ImageName 	string 		`json:"image_name"`
++	Registry 	string		`json:"registry"`
++	LayerKeys	[]string	`json:"layer_keys"`
++	Tag			string		`json:"tag"`
++	Digest		string		`json:"digest"`
++}
+diff --git a/pkg/state/workers.go b/pkg/state/workers.go
+new file mode 100644
+index 0000000..58f64b3
+--- /dev/null
++++ b/pkg/state/workers.go
+@@ -0,0 +1,259 @@
++package state
++
++import (
++	"context"
++	"fmt"
++	"time"
++	"sync"
++	"net/netip"
++	"encoding/json"
++	"math/rand"
++	
++	"github.com/go-logr/logr"
++	"github.com/opencontainers/go-digest"
++	
++	"clyde/pkg/oci"
++	"clyde/pkg/routing"
++)
++
++func synchronise(ctx context.Context, ociClient oci.Client, router routing.Router, images []string, ContainerdContentPath string) error {
++	log := logr.FromContextOrDiscard(ctx)
++
++	// Set the global indicator to true
++	setBusy(true)
++
++	// Obtain local content
++	jsonData, localSet, err := getLocalBlobs(ctx, ociClient, images)
++	if err != nil {
++		log.Error(err, "error collecting local keys")
++	} else {
++		log.Info("extracted local content")
++	}
++
++	// Serve our keys in a suitable format (e.g., json string) for trasnmission over to peers
++	if err := router.ServeKeys(ctx, jsonData); err != nil {
++		log.Error(err, "failed to serve local keys")
++	}
++
++	// Advertise our presence using the peer index so that other peers can discover me
++	if err := router.Advertise(ctx, []string{routing.PeerIndexKey}); err != nil {
++		log.Error(err, "failed to advertise peer presence")
++	}
++
++	missingKeyInfo := make(map[string][]KeySource) // key -> list of sources
++
++	// Discover peers via the peer index and fetch relevant information (e.g., metadata about their content)
++	peerCh, err := router.Resolve(ctx, routing.PeerIndexKey, 0)
++	if err != nil {
++		log.Error(err, "failed to resolve peer index")
++		return nil
++	}
++
++	for peerAddr := range peerCh {
++		remoteKeys, err := router.FetchPeerKeys(ctx, peerAddr)
++		if err != nil {
++			log.Error(err, "could not fetch keys from peer", 
++				"peer", peerAddr)
++			continue 
++		}
++
++		// Skip empty responses
++		if remoteKeys == "" {
++			continue 
++		}
++
++		var imageLayers []map[string]interface{}
++		if err := json.Unmarshal([]byte(remoteKeys), &imageLayers); err != nil {
++			log.Error(err, "failed to parse json data from peer", 
++				"peer", peerAddr, 
++				"response", remoteKeys)
++			continue
++		}
++
++		for _, image := range imageLayers {
++			imageName, ok := image["image_name"].(string)
++			if !ok {
++				log.Info("missing or invalid layer_keys in peer data", 
++					"peer", peerAddr, 
++					"image", imageName)
++				continue
++			}
++
++			layers, ok := image["layer_keys"].([]interface{})
++			if !ok {
++				log.Info("missing or invalid layer_keys in peer data", 
++					"peer", peerAddr, 
++					"image", imageName)
++				continue
++			}
++
++			registry, ok := image["registry"].(string)
++			if !ok {
++				log.Info("missing or invalid registry in peer data", 
++					"peer", peerAddr, 
++					"image", imageName)
++				continue	
++			}
++
++			layerDigests := make([]string, 0, len(layers))
++			for _, layer := range layers {
++				if digest, ok := layer.(string); ok {
++					layerDigests = append(layerDigests, digest)
++
++					// Check if this key is missing locally and track its image context
++					if _, exists := localSet[digest]; !exists {
++						source := KeySource {
++							PeerAddr: peerAddr.String(),
++							ImageName: imageName,
++							Registry: registry,
++						}
++
++						if existingSources, found := missingKeyInfo[digest]; found {
++							// Check if this exact source already exists to avoid duplicates
++							duplicate := false
++							for _, existing := range existingSources {
++								if existing.PeerAddr == source.PeerAddr && existing.ImageName == source.ImageName {
++									duplicate = true
++									break
++								}
++							}
++							if !duplicate {
++								// Add to missing keys
++								missingKeyInfo[digest] = append(existingSources, source)
++							}
++						} else {
++							missingKeyInfo[digest] = []KeySource{source}
++						}
++					}
++				}
++			}
++
++			log.Info("discovered image from peer", 
++				"peer", peerAddr, 
++				"image", imageName,
++				"registry", registry, 
++				"layer_count", len(layerDigests), 
++				"layers", layerDigests,)
++		}
++	}
++
++	// Wait group for parallelising image layer downloads
++	var wg sync.WaitGroup
++
++	// Handle missing keys here
++	if len(missingKeyInfo) > 0 {
++		missingKeys := make([]string, 0, len(missingKeyInfo))
++		for key := range missingKeyInfo {
++			missingKeys = append(missingKeys, key)
++		}
++
++		log.Info("found potential keys to fetch", 
++			"count", len(missingKeys), 
++			"keys", missingKeys)
++
++		// Fetch missing keys from remote peers with image context
++		for key, sources := range missingKeyInfo {
++			// Now using parallelised approach to obtain missing keys concurrently rather than in sequence
++			wg.Add(1)
++
++			go func(c context.Context, k string, src []KeySource, l logr.Logger, p string) {
++				defer wg.Done()
++				if err := worker(c, k, src, l, p); err != nil {
++					fmt.Printf("	- %s\n", err)
++				}
++			}(ctx, key, sources, log, ContainerdContentPath)
++
++			wg.Wait()
++
++			// Set the indicator back to false
++			setBusy(false)
++		}
++
++	} else {
++		log.Info("no missing keys found from peers")
++	}
++
++	// Defensive programming here, setting indicator to false
++	setBusy(false)
++	return nil
++
++}
++
++func worker(ctx context.Context, key string, sources []KeySource, log logr.Logger, ContainerdContentPath string) error {
++	// Log all available sources for this key
++	for _, source := range sources {
++		log.Info("key availability from source peer", 
++			"key", key, 
++			"peer", source.PeerAddr, 
++			"image", source.ImageName)
++	}
++
++	if len(sources) > 0 {
++		source := sources[0]
++
++		if len(sources) == 1 {
++			log.Info(
++				"Selected a source (peer) to fetch key from", 
++				"key", key, 
++				"peer", source.PeerAddr, 
++				"registry", source.Registry, 
++				"image", source.ImageName)
++		} else {
++			rng := rand.New(rand.NewSource(time.Now().UnixNano()))
++			source = sources[rng.Intn(len(sources))]
++			log.Info("Selected a source (peer) to fetch key from", 
++				"key", key, 
++				"peer", source.PeerAddr, 
++				"registry", source.Registry, 
++				"image", source.ImageName)
++		}
++
++		peerAddr, err := netip.ParseAddrPort(source.PeerAddr)
++		if err != nil {
++			return fmt.Errorf("invalid peer address")
++		}
++
++		dgst, err := digest.Parse(key)
++		if err != nil {
++			return fmt.Errorf("invalid digest")
++		}
++
++		if checkBlobExists(dgst, ContainerdContentPath) {
++			log.Info("Blob already exists, skipping fetch operation", "key", key)
++		} else {
++			start := time.Now()
++			// Try to fetch missing data from source and store it
++			resp, respErr := fetchBlob(ctx, peerAddr, source.Registry, source.ImageName, dgst)
++
++			if respErr != nil {
++
++			} else {
++				if err := writeBlobToLocalPath(resp, dgst, ContainerdContentPath); err != nil {
++					log.Error(err, "failed to write blob to containerd")
++				} else {
++					log.Info("blob successfully stored", 
++						"digest", dgst.String())
++				}
++			}
++
++			elapsed := time.Since(start)
++
++			if err != nil {
++				// Error fetching, log the image
++				log.Error(err, "failed to fetch key", 
++					"key", key, 
++					"peer", source.PeerAddr, 
++					"image", source.ImageName)
++			} else {
++				log.Info("fetched content of key", 
++					"key", key, 
++					"peer", source.PeerAddr, 
++					"image", source.ImageName, 
++					"time in milliseconds:", elapsed.Microseconds(), 
++					"time in seconds:", elapsed.Seconds())
++			}
++		}
++	}
++
++	return nil
++}
