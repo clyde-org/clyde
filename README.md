@@ -1,7 +1,7 @@
 ## Clyde
 
 <div style="overflow: hidden;">
-  <img src="docs/logo.jpg" 
+  <img src="docs/logo.png" 
        alt="Clyde Logo" 
        width="200" 
        style="float: left; margin-right: 15px; margin-bottom: 10px;">
