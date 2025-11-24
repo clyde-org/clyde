@@ -2,7 +2,8 @@
 ![Clyde Architecture](./img/clyde-design.png "Clyde Architecture")
 
 ## Clyde Components
-The Clyde components runs on each node to which is responsible for interacting with the data service api on the node such as containerd for pulling and managing images
+
+The Clyde components runs on each node to which is responsible for interacting with the data service API on the node such as containerd for pulling and managing images. These components include the Local Data Registry, P2P Service, and State Manager.
 
 ### Local Data Registry
 The Data Registry Service is responsible for implementing a local registry on each node that can store, serve, and respond to requests for data artifacts such as container images or Python packages. This registry acts as the first point of resolution for incoming fetch requests, reducing latency and external bandwidth usage by avoiding unnecessary access to remote registries. For example, if a node attempts to docker pull or pip install a package, the request is first redirected to this local registry, which serves the content if it is already available locally.
@@ -15,6 +16,8 @@ The P2P Component includes a DHT-based peer discovery and routing system impleme
 The State Manager component is designed to interface with the underlying container runtime (e.g., containerd) to gather real-time metrics, container lifecycle events, and usage statistics. This information is critical for making informed decisions about what data to retain, evict, or prefetch based on local demand and system constraints. For instance, the State Manager can track the most frequently accessed OCI layers or pip packages, enabling the system to prioritize them for local storage and advertisement.
 
 ## Node Components
+
+The node components include the service and associated API as well as the local data source.
 
 ### Service
 Each node runs one or more services such as containerd, pip, or git, which are configured to forward their fetch requests to the Clyde proxy. This redirection allows Clyde to intercept requests like docker pull, pip install, or git clone, enabling local or P2P resolution before falling back to upstream sources. For example, pip is configured to use a custom index URL pointing to Clyde’s proxy endpoint.
@@ -58,4 +61,3 @@ sequenceDiagram
 
     Proxy-->>Service: Deliver data blob(s)
     Service-->>Client: Data/package ready
-```

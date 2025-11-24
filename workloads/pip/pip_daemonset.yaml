@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: pip-exp
+spec:
+  selector:
+    matchLabels:
+      app: pip-exp
+  template:
+    metadata:
+      labels:
+        app: pip-exp
+    spec:
+      # Allow pods to run on control-plane nodes
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      containers:
+        - name: pip-exp
+          image: ghcr.io/clyde-org/pip.exp:v1.2
+          imagePullPolicy: Always
+          volumeMounts:
+            - name: pip-cache
+              mountPath: /data/cache/pip/wheel
+            - name: etc-config
+              mountPath: /etc   # mount entire etc directory to include pip.conf
+
+      volumes:
+        - name: pip-cache
+          hostPath:
+            path: /data/cache/pip/wheel
+            type: DirectoryOrCreate
+        - name: etc-config
+          hostPath:
+            path: /etc   # node /etc directory (includes pip.conf and proxy settings)
+            type: Directory
+
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - pip-exp
+              topologyKey: "kubernetes.io/hostname"
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - master-14-ascd
+                      - master-16
+                      - master-17
+                      - master-19
+                      - master-20
+                      - master-22
+                      - worker-10
+                      - worker-11
+                      - worker-12
+                      - worker-23
+                      - worker-24
+                      - worker-25
+                      - worker-26
+                      - worker-27
+                      - worker-28
+                      - worker-29
+                      - worker-30
+                      - worker-31
+                      - worker-32
+                      - worker-33
+                      - worker-34
+                      - worker-35
+                      - worker-37
+                      - worker-38
+                      - worker-39
+                      - worker-40
+                      - worker-41
+
+      restartPolicy: Always
