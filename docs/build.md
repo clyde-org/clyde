@@ -6,10 +6,13 @@ This guide describes how to build Clyde from source, create container images for
 
 ## 1. Prerequisites
 
+You would need the following packages to get started:
+
 * Go installed
 * Docker installed (with `buildx` recommended for multi-arch builds)
-* Make & GoReleaser installed
-* Kubernetes cluster & Helm installed
+* Make
+* Other tools including `goreleaser` and `golangci-lint`
+* Cluster admin tools including `kubectl` and `helm`
 
 Clone the code:
 

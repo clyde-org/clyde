@@ -4,6 +4,7 @@ TAG = $$(git rev-parse --short HEAD)
 IMG_NAME ?= clyde
 IMG_REF = $(IMG_NAME):$(TAG)
 
+## Lint rule
 lint:
 	golangci-lint run ./...
 
