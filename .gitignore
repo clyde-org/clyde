@@ -33,3 +33,5 @@ secret/
 
 logs
 log*.log
+
+tools/seeding/__pycache__
