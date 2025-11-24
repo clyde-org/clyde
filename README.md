@@ -5,29 +5,25 @@
        alt="Clyde Logo" 
        width="200" 
        style="float: left; margin-right: 15px; margin-bottom: 10px;">
-  Clyde is a high-performance peer-to-peer (P2P) data acceleration engine built for rapid, large-scale delivery across diverse and distributed compute environments. Originally designed to optimize container image distribution across cluster nodes, Clyde now extends its capabilities to general content delivery including Huggingface models and Python (pip) packages. By leveraging intelligent peer discovery and local data sharing, Clyde dramatically reduces network overhead, speeds up deployment times, and enhances scalability for AI and cloud-native workloads.
+  Clyde is a high-performance peer-to-peer (P2P) data acceleration engine built for rapid, large-scale delivery across diverse and distributed compute environments. Originally designed to optimize container image distribution across cluster nodes, Clyde now extends its capabilities to general content delivery including Huggingface models and Python (pip) packages. By leveraging intelligent peer discovery and local data sharing, Clyde reduces network overhead, speeds up deployment times, and enhances scalability for AI and Cloud-native workloads.
 </div>
-
-## Architecture
 
 ![Clyde Architecture](docs/img/clyde-design.png "Clyde Architecture")
 
-See more in the [design and architecture](./docs/design.md) guide.
-
-## Main Features
+## Features
 
 1. **Container Image Distribution:** Clyde accelerates container image delivery across nodes through peer-to-peer sharing, reducing pull times and registry load.
 2. **Hugging Face Model Distribution:** Large AI models are efficiently distributed using Clyde’s decentralized network, minimizing bandwidth and improving availability.
 3. **Pip Package Distribution:** Python packages are fetched and shared locally within the cluster, enabling faster installs and reduced dependency on external repositories.
 4. **Design Simplicity:** Clyde uses a simplified stateless design making it performant and easy to extend.
-5. **Speed:** Data is cached locally on nodes and transmitted through the P2P network to enable faster delivery across the cluster.
+5. **Speed:** Data is cached locally on nodes and transmitted through the peer-to-peer network to enable faster delivery across the cluster.
 6. **Saving:** Save bandwidth by serving content locally instead.
 7. **Versatile:** Avoids rate-limiting and works even when external sources are down.
-8. **Preseeding** Preseed common images to nodes before larger deployment. [ More Information Here ](tools/seeding/README.md)
+8. **Pre-seeding** Preseed common images to nodes before larger deployment. Please read through our  [documentation](tools/seeding/README.md) for more information.
 
-## Quick Motivating Results
+## Motivating Results
 
-For more details of the results see [Experiment Results](./docs/install.md#experiments)
+For more details, please see our [experimental results](./docs/install.md#experiments)
 
 | Container Images                                   | HuggingFace Models                          | pip Packages                                 |
 | -------------------------------------------------- | ------------------------------------------- | -------------------------------------------- |
@@ -35,29 +31,23 @@ For more details of the results see [Experiment Results](./docs/install.md#exper
 
 ## Design & Architecture
 
-Follow the [design and architecture](./docs/design.md) to understand the design and architecture of Clyde.
+For more information on the design architecture, please read through our [documentation](./docs/design.md).
 
-## Build and Install
+## Technical Guides
 
-Please follow the building and installation instructions at [build](./docs/build.md) and [install](./docs/install.md) guides respectively to get started.
+### Building 
+
+Please follow the [build](./docs/build.md) guide for details on building the project from source.
+
+### Installation 
+
+Please follow the [install](./docs/install.md) guide to get started.
 
 ## Contribution
 
-We welcome new contributors! And we are happy to provide guidance and help for new contributors. Clyde follows the standard Go formatting conventions. 
+We welcome new contributors! And we are happy to provide guidance and help for new contributors. Clyde follows the standard Go formatting conventions. If you find a bug or have some ideas, please submit an issue.
 
-If you find a bug or have some ideas, please submit an issue.
-
-You would need the following to get started:
-
-```bash 
-go
-golangci-lint
-goreleaser
-docker
-helm
-kubectl
-```
-Follow [build](docs/build.md) to build from source. 
+Please read through the [build](docs/build.md) guide for details.
 
 ### Acceptance Creteria
 
@@ -69,8 +59,6 @@ Follow [build](docs/build.md) to build from source.
 - Update helm docs if any `make helm-docs`
 - One logical change
 - Follows project style
-
-
 
 ## Acknowledgement
 
