@@ -77,8 +77,5 @@ with open(csv_file, mode='w', newline='') as f:
     writer.writerows(timing_data)
 
 print(f"Timing data saved to {csv_file}")
-# export http_proxy=http://7.151.7.216:3128
-# export https_proxy=http://7.151.7.216:3128
-
 while True:
     time.sleep(3600)
