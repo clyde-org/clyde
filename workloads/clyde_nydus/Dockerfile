@@ -1,15 +1,12 @@
 FROM python:3.10-slim
 
-# Or for even better compatibility:
-# FROM python:3.11-slim
-
 # Set work directory
 WORKDIR /app
 
 # Set non-interactive mode
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies (only if needed)
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
