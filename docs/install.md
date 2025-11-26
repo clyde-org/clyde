@@ -51,7 +51,7 @@ The quick install guide installs Clyde directly from the Clyde Helm Chart hosted
 3. Run `kubectl get pods -o wide -n clyde`
 ```
 
-![image](img/clyde_pods.png)
+![image](img/clyde_pods_anon.png)
 
 ### Test
 Follow the steps below to test each component. For large scale testing see the `workload` directory in the project. 
