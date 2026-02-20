@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: deepseek-r1-distill-llama-8b
+spec:
+  selector:
+    matchLabels:
+      app: deepseek-r1-distill-llama-8b
+  template:
+    metadata:
+      labels:
+        app: deepseek-r1-distill-llama-8b
+    spec:
+      # add this toleration for the 32 node cluster only
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+        - name: deepseek-r1-distill-llama-8b
+          #image: ghcr.io/clyde-org/clyde.nydus:v1.3
+          image: ghcr.io/clyde-org/clyde.nydus:v1.3-nydus
+          imagePullPolicy: Always
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - deepseek-r1-distill-llama-8b
+              topologyKey: "kubernetes.io/hostname"
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - worker-14
+                      - worker-15
+                      - worker-16
+                      - worker-17
+                      - worker-18
+                      - worker-19
+                      - worker-20
+                      - worker-21
+                      - worker-22
+                      - worker-23
+                      - worker-24
+                      - worker-25
+                      - worker-30
+                      - worker-31
+                      - worker-32
+                      - worker-33
+                      - worker-34
+                      - worker-35
+                      - worker-36
+                      - worker-37
+                      - worker-38
+                      - worker-39
+                      - worker-40
+                      - worker-41

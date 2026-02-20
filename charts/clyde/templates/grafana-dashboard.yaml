@@ -1,0 +1,17 @@
+{{- if .Values.grafanaDashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "clyde.fullname" . }}-dashboard
+  namespace: {{ include "clyde.namespace" . }}
+  labels:
+    {{ .Values.grafanaDashboard.sidecarLabel }}: {{ .Values.grafanaDashboard.sidecarLabelValue | quote }}
+    {{- include "clyde.labels" . | nindent 4 }}
+  {{- with .Values.grafanaDashboard.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+    clyde.json: |-
+{{ .Files.Get "monitoring/grafana-dashboard.json" | indent 6 }}
+{{- end }}

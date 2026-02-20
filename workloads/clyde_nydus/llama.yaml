@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: llama-llama3-2-4
+spec:
+  nodeName: worker-16
+  restartPolicy: Never   
+  containers:
+  - name: llama-llama3-2-4
+    image: ghcr.io/clyde-org/clyde.nydus:v1.3-nydus
