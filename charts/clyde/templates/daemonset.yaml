@@ -1,0 +1,247 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "clyde.fullname" . }}
+  namespace: {{ include "clyde.namespace" . }}
+  labels:
+    {{- include "clyde.labels" . | nindent 4 }}
+spec:
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  updateStrategy:
+    {{- toYaml .Values.updateStrategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "clyde.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "clyde.selectorLabels" . | nindent 8 }}
+        {{- with .Values.commonLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "clyde.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      priorityClassName: {{ .Values.priorityClassName }}
+      {{- if .Values.clyde.containerdMirrorAdd }}
+      initContainers:
+      - name: configuration
+        image: "{{ include "clyde.image" . }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+        args:
+          - configuration
+          - --log-level={{ .Values.clyde.logLevel }}
+          - --containerd-registry-config-path={{ .Values.clyde.containerdRegistryConfigPath }}
+          {{- with .Values.clyde.mirroredRegistries }}
+          - --mirrored-registries
+          {{- range . }}
+          - {{ . | quote }}
+          {{- end }}
+          {{- end }}
+          - --mirror-targets
+          - http://$(NODE_IP):{{ .Values.service.registry.hostPort }}
+          - http://$(NODE_IP):{{ .Values.service.registry.nodePort }}
+          {{- with .Values.clyde.additionalMirrorTargets }}
+          {{- range . }}
+          - {{ . | quote }}
+          {{- end }}
+          {{- end }}
+          - --resolve-tags={{ .Values.clyde.resolveTags }}
+          - --prepend-existing={{ .Values.clyde.prependExisting }}
+        env:
+        - name: NODE_IP
+          {{- include "networking.nodeIp" . | nindent 10 }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        volumeMounts:
+          - name: containerd-config
+            mountPath: {{ .Values.clyde.containerdRegistryConfigPath }}
+          {{- if .Values.basicAuthSecretName }}
+          - name: basic-auth
+            mountPath: "/etc/secrets/basic-auth"
+            readOnly: true
+          {{- end }}
+
+      - name: pip-configuration
+        image: "{{ include "clyde.image" . }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+        args:
+          - pip-configuration
+          - --log-level={{ .Values.clyde.logLevel }}
+          - --pip-config-path={{ .Values.pip.pipConfigPath}}
+          - --pip-cache-dir={{ .Values.pip.pipCacheDir }}
+          # - --proxy=http://$(NODE_IP):{{ .Values.service.registry.nodePort }}
+          - --index-url=http://$(NODE_IP):{{ .Values.service.registry.hostPort }}/simple
+          - --trusted-host=$(NODE_IP)
+          - --timeout={{ .Values.pip.timeout }}
+        env:
+        - name: NODE_IP
+          {{- include "networking.nodeIp" . | nindent 10 }}
+        volumeMounts:
+          - name: pip-config
+            mountPath: {{ .Values.pip.pipConfigPath }}
+      {{- end }}
+      - name: huggingface-configuration
+        image: "{{ include "clyde.image" . }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+        args:
+          - hf-configuration
+          - --log-level={{ .Values.clyde.logLevel }}
+          - --hf-cache-dir={{ .Values.hf.hfCacheDir }}
+        env:
+        - name: NODE_IP
+          {{- include "networking.nodeIp" . | nindent 10 }}
+        volumeMounts:
+          - name: hf-cache
+            mountPath: {{ .Values.hf.hfCacheDir }}
+      containers:
+      - name: registry
+        image: "{{ include "clyde.image" . }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+        args:
+          - registry
+          - --log-level={{ .Values.clyde.logLevel }}
+          - --mirror-resolve-retries={{ .Values.clyde.mirrorResolveRetries }}
+          - --mirror-resolve-timeout={{ .Values.clyde.mirrorResolveTimeout }}
+          - --registry-addr=:{{ .Values.service.registry.port }}
+          - --router-addr=:{{ .Values.service.router.port }}
+          - --metrics-addr=:{{ .Values.service.metrics.port }}
+          {{- with .Values.clyde.mirroredRegistries }}
+          - --mirrored-registries
+          {{- range . }}
+          - {{ . | quote }}
+          {{- end }}
+          {{- end }}
+          - --containerd-sock={{ .Values.clyde.containerdSock }}
+          - --containerd-namespace={{ .Values.clyde.containerdNamespace }}
+          - --containerd-registry-config-path={{ .Values.clyde.containerdRegistryConfigPath }}
+          - --bootstrap-kind=dns
+          - --dns-bootstrap-domain={{ include "clyde.fullname" . }}-bootstrap.{{ include "clyde.namespace" . }}.svc.{{ .Values.clusterDomain }}
+          - --resolve-latest-tag={{ .Values.clyde.resolveLatestTag }}
+          {{- with .Values.clyde.containerdContentPath }}
+          - --containerd-content-path={{ . }}
+          {{- end }}
+          - --debug-web-enabled={{ .Values.clyde.debugWebEnabled }}
+          - --enable-pip-proxy={{ .Values.clyde.enablePipProxy }}
+        env:
+        {{- if ((.Values.resources).limits).cpu }}
+        - name: GOMAXPROCS
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.cpu
+              divisor: 1
+        {{- end }}
+        {{- if ((.Values.resources).limits).memory }}
+        - name: GOMEMLIMIT
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.memory
+              divisor: 1
+        {{- end }}
+        - name: NODE_IP
+        {{- include "networking.nodeIp" . | nindent 10 }}
+        ports:
+          - name: registry
+            containerPort: {{ .Values.service.registry.port }}
+            hostPort: {{ .Values.service.registry.hostPort }}
+            protocol: TCP
+          - name: router
+            containerPort: {{ .Values.service.router.port }}
+            protocol: TCP
+          - name: metrics
+            containerPort: {{ .Values.service.metrics.port }}
+            protocol: TCP
+        # Startup may take a bit longer on bootsrap as Pods need to find each other.
+        # This is why the startup proben is a bit more forgiving, while hitting the endpoint more often.
+        startupProbe:
+          periodSeconds: 3
+          failureThreshold: 60
+          httpGet:
+            path: /healthz
+            port: registry
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: registry
+        volumeMounts:
+          {{- if .Values.basicAuthSecretName }}
+          - name: basic-auth
+            mountPath: "/etc/secrets/basic-auth"
+            readOnly: true
+          {{- end }}
+          - name: containerd-sock
+            mountPath: {{ .Values.clyde.containerdSock }}
+          {{- with .Values.clyde.containerdContentPath }}
+          - name: containerd-content
+            mountPath: {{ . }}
+            readOnly: true
+          {{- end }}
+          - name: pip-cache-dir
+            mountPath: {{ .Values.pip.pipCacheDir }}
+          - name: hf-cache
+            mountPath: {{ .Values.hf.hfCacheDir }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+      volumes:
+        {{- with .Values.basicAuthSecretName }}
+        - name: basic-auth
+          secret:
+            secretName: {{ . }}
+        {{- end }}
+        - name: containerd-sock
+          hostPath:
+            path: {{ .Values.clyde.containerdSock }}
+            type: Socket
+        {{- with .Values.clyde.containerdContentPath }}
+        - name: containerd-content
+          hostPath:
+            path: {{ . }}
+            type: Directory
+        {{- end }}
+        {{- if .Values.clyde.containerdMirrorAdd }}
+        - name: containerd-config
+          hostPath:
+            path: {{ .Values.clyde.containerdRegistryConfigPath }}
+            type: DirectoryOrCreate
+        {{- end }}
+        - name: pip-config
+          hostPath:
+            path: {{ .Values.pip.pipConfigPath }}
+            type: DirectoryOrCreate
+        - name: pip-cache-dir
+          hostPath:
+            path: {{ .Values.pip.pipCacheDir }}
+            type: DirectoryOrCreate
+        - name: hf-cache
+          hostPath:
+            path: {{ .Values.hf.hfCacheDir }}
+            type: DirectoryOrCreate
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

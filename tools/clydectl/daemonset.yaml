@@ -1,0 +1,17 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: deepseek-r1-distill-llama-8b
+spec:
+  selector:
+    matchLabels:
+      app: deepseek-r1-distill-llama-8b
+  template:
+    metadata:
+      labels:
+        app: deepseek-r1-distill-llama-8b
+    spec:
+      containers:
+        - name: deepseek-r1-distill-llama-8b
+          image: ghcr.io/clyde-org/deepseek.r1.distill.llama.8b-arm:v1.0
+          imagePullPolicy: Always

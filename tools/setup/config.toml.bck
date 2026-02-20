@@ -1,0 +1,57 @@
+version = 3
+
+root = "/var/lib/containerd"
+state = "/run/containerd"
+oom_score = 0
+
+[grpc]
+  max_recv_message_size = 16777216
+  max_send_message_size = 16777216
+
+[debug]
+  address = ""
+  level = "info"
+  format = ""
+  uid = 0
+  gid = 0
+
+[metrics]
+  address = ""
+  grpc_histogram = false
+
+[plugins]
+  [plugins."io.containerd.cri.v1.runtime"]
+    max_container_log_line_size = 16384
+    enable_unprivileged_ports = false
+    enable_unprivileged_icmp = false
+    enable_selinux = false
+    disable_apparmor = false
+    tolerate_missing_hugetlb_controller = true
+    disable_hugetlb_controller = true
+
+  [plugins."io.containerd.cri.v1.runtime".containerd]
+    default_runtime_name = "runc"
+    discard_unpacked_layers = false
+
+    [plugins."io.containerd.cri.v1.runtime".containerd.runtimes]
+      [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.runc]
+        runtime_type = "io.containerd.runc.v2"
+        base_runtime_spec = "/etc/containerd/cri-base.json"
+
+        [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.runc.options]
+          Root = ""
+          SystemdCgroup = true
+          BinaryName = "/usr/local/bin/runc"
+
+  [plugins."io.containerd.cri.v1.images"]
+    snapshotter = "overlayfs"
+    image_pull_progress_timeout = "5m"
+
+    [plugins."io.containerd.cri.v1.images".pinned_images]
+      sandbox = "registry.k8s.io/pause:3.10.1"
+
+    [plugins."io.containerd.cri.v1.images".registry]
+      config_path = "/etc/containerd/certs.d"
+
+  [plugins."io.containerd.nri.v1.nri"]
+    disable = false
