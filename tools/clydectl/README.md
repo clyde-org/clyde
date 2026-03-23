@@ -11,9 +11,44 @@
 
 ## Usage
 
-### Smart Deployment
+### Build clydectl
 
-The `daemonset` command first classifies node network type:
+From the `tools/clydectl` directory, run tests and build:
+
+```bash
+go test ./... && go build -o clydectl .
+```
+
+This produces a local `./clydectl` binary that you can use for the commands in this README.
+
+### Quick start
+
+#### 1) Seed from Hugging Face model cache (disable bandwidth-aware path)
+```bash
+./clydectl daemonset \
+  --image ghcr.io/clyde-org/hf.exp:v1.11 \
+  --seed-source hf-model \
+  --hf-model deepseek-ai/DeepSeek-R1-Distill-Qwen-32B \
+  --hf-cache-dir /data/cache/hf/model \
+  --daemonset-file ../../workloads/hf/hf_daemonset.yaml \
+  --seed-stop-ratio 0.2 \
+  --disable-bandwidth-aware
+```
+
+#### 2) Seed from image pull (timed run, disable bandwidth-aware path)
+```bash
+time ./clydectl daemonset \
+  --image sneceesay77/deepseek.r1.distill.llama.8b-arm:v1.0 \
+  --name clyde-app-pull \
+  --namespace default \
+  --seed-stop-ratio 0.2 \
+  --disable-bandwidth-aware \
+  --initial-seeds 1
+```
+
+### Smart deployment flow
+
+`clydectl daemonset` first classifies cluster node type by network reachability:
 
 1. **Public-capable cluster** (all nodes have public `ExternalIP`):
    - Optionally pre-seed `--public-seeds` nodes from source.
@@ -48,26 +83,19 @@ Example (10-node cluster):
 - `--initial-seeds=0` -> auto initial = `max(2, floor(10% of 10)=1)` = `2`
 - Seeding starts at 2 and then doubles/expands until 5 seeded nodes are reached
 
-#### Plan design
+#### Plan diagram (node-type classification + execution path)
 
 ```mermaid
 flowchart TD
-  startNode[Start daemonset deploy] --> classifyNode[Classify nodes by network type]
-  classifyNode --> publicPath[Public capable path]
-  classifyNode --> privatePath[Private or NAT path]
-
-  publicPath --> remotePull[Seed N nodes from source pull]
-  remotePull --> deployNode[Deploy DaemonSet]
-
-  privatePath --> initSeed[Start initial seed pull on X nodes]
-  initSeed --> monitorNode[Monitor network while pull runs]
-  monitorNode --> qualityGate[Quality good]
-  qualityGate --> expandSeeds[Increase source pull seed count]
-  qualityGate --> holdSeeds[Keep current seed count]
-  expandSeeds --> waitInitial[Wait initial seeds complete]
-  holdSeeds --> waitInitial
-  waitInitial --> stopMonitor[Stop monitoring]
-  stopMonitor --> deployNode
+  startNode[Start Deploy] --> classifyNode[Classify Node Type]
+  classifyNode -->|All External IP| deployNode[Deploy DaemonSet]
+  classifyNode -->|Private Or Mixed| monitorToggle{Bandwidth Aware Enabled}
+  monitorToggle -->|No| seedToTarget[Seed To Target]
+  monitorToggle -->|Yes| qualityGate{Quality Healthy}
+  qualityGate -->|Yes| expandSeeds[Expand Seed Wave]
+  qualityGate -->|No| seedToTarget
+  expandSeeds --> seedToTarget
+  seedToTarget --> deployNode
 ```
 
 #### Example with numbers (Private/NAT path)
@@ -121,12 +149,15 @@ clydectl daemonset \
 
 ### Examples
 
-**Current deployment example (timed run):**
+**Timed deployment (image source):**
 ```bash
 time ./clydectl daemonset \
-  --image ghcr.io/clyde-org/deepseek.r1.distill.llama.8b-arm:v1.0 \
+  --image sneceesay77/deepseek.r1.distill.llama.8b-arm:v1.0 \
   --name clyde-app-pull \
-  --namespace default
+  --namespace default \
+  --seed-stop-ratio 0.2 \
+  --disable-bandwidth-aware \
+  --initial-seeds 1
 ```
 This command uses automatic network-type detection and default monitoring thresholds unless you pass explicit seeding/monitor flags.
 
@@ -138,26 +169,16 @@ clydectl daemonset \
   --public-seeds 3
 ```
 
-**Seed from Hugging Face model cache (instead of image pull):**
+**Seed from Hugging Face model cache (use custom DaemonSet file):**
 ```bash
-clydectl daemonset \
-  --name hf-exp \
-  --image ghcr.io/clyde-org/hf.exp:v1.3 \
+./clydectl daemonset \
+  --image ghcr.io/clyde-org/hf.exp:v1.11 \
   --seed-source hf-model \
   --hf-model deepseek-ai/DeepSeek-R1-Distill-Qwen-32B \
   --hf-cache-dir /data/cache/hf/model \
-  --use-local-proxy true \
-  --namespace clyde
-```
-
-**Deploy using your own DaemonSet YAML file:**
-```bash
-clydectl daemonset \
-  --image ghcr.io/clyde-org/hf.exp:v1.3 \
-  --seed-source hf-model \
-  --hf-model deepseek-ai/DeepSeek-R1-Distill-Qwen-32B \
-  --daemonset-file workloads/hf/hf_daemonset.yaml \
-  --namespace clyde
+  --daemonset-file ../../workloads/hf/hf_daemonset.yaml \
+  --seed-stop-ratio 0.2 \
+  --disable-bandwidth-aware
 ```
 
 **Private/NAT cluster (monitor and adaptively expand seeds):**
