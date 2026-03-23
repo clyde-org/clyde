@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-prebaked
+  labels:
+    app: vllm-prebaked
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-prebaked
+  template:
+    metadata:
+      labels:
+        app: vllm-prebaked
+    spec:
+      nodeSelector:
+        workload: gpu-inference
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - vllm-prebaked
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: vllm
+          # Public vLLM image + larger public model for paper-scale tests.
+          image: vllm/vllm-openai:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+          args:
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8000"
+            - "--model"
+            - "Qwen/Qwen2.5-7B-Instruct"
+            - "--gpu-memory-utilization"
+            - "0.95"
+            - "--max-model-len"
+            - "1024"
+          ports:
+            - containerPort: 8000
+              name: http
+          resources:
+            requests:
+              cpu: "4"
+              memory: 16Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "4"
+              memory: 16Gi
+              nvidia.com/gpu: "1"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 20

@@ -38,16 +38,21 @@ func NewExecutor(c *kube.Client) *Executor {
 	}
 }
 
-func (e *Executor) Seed(ctx context.Context, image string, batchSize int) error {
-	batch, err := e.StartSeedBatch(ctx, image, batchSize)
+func (e *Executor) Seed(ctx context.Context, target Target, batchSize int) error {
+	batch, err := e.StartSeedBatch(ctx, target, batchSize)
 	if err != nil {
 		return err
 	}
 	return e.WaitForBatch(ctx, batch)
 }
 
-// StartSeedBatch starts image pull pods pinned to unseeded nodes without waiting.
-func (e *Executor) StartSeedBatch(ctx context.Context, image string, batchSize int) (Batch, error) {
+// RunningSeedCount returns number of seed nodes currently in-flight.
+func (e *Executor) RunningSeedCount() int {
+	return len(e.inFlight)
+}
+
+// StartSeedBatch starts seed pods pinned to unseeded nodes without waiting.
+func (e *Executor) StartSeedBatch(ctx context.Context, target Target, batchSize int) (Batch, error) {
 	if batchSize <= 0 {
 		return Batch{}, nil
 	}
@@ -56,15 +61,15 @@ func (e *Executor) StartSeedBatch(ctx context.Context, image string, batchSize i
 	if err != nil {
 		return Batch{}, err
 	}
-	return e.startBatchOnNodes(ctx, image, targetNodes, "clyde-seed", true)
+	return e.startBatchOnNodes(ctx, target, targetNodes, "clyde-seed", true)
 }
 
 // StartMonitorBatch starts pull-probe pods on specific nodes (no seeded-state mutation).
 func (e *Executor) StartMonitorBatch(ctx context.Context, image string, nodes []string) (Batch, error) {
-	return e.startBatchOnNodes(ctx, image, nodes, "clyde-monitor", false)
+	return e.startBatchOnNodes(ctx, Target{Type: TargetTypeImage, Image: image}, nodes, "clyde-monitor", false)
 }
 
-func (e *Executor) startBatchOnNodes(ctx context.Context, image string, nodes []string, prefix string, trackSeedState bool) (Batch, error) {
+func (e *Executor) startBatchOnNodes(ctx context.Context, target Target, nodes []string, prefix string, trackSeedState bool) (Batch, error) {
 	targetNodes := append([]string(nil), nodes...)
 	fmt.Printf("Targeting %d specific nodes: %v\n", len(targetNodes), targetNodes)
 
@@ -77,7 +82,18 @@ func (e *Executor) startBatchOnNodes(ctx context.Context, image string, nodes []
 		if !trackSeedState {
 			labels = map[string]string{"clyde-monitoring": "true"}
 		}
-		pod, err := e.client.CreatePullPod(ctx, image, nodeName, prefix, labels)
+		var (
+			pod *corev1.Pod
+			err error
+		)
+		switch target.Type {
+		case TargetTypeImage:
+			pod, err = e.client.CreatePullPod(ctx, target.Image, nodeName, prefix, labels)
+		case TargetTypeHFModel:
+			pod, err = e.client.CreateHFModelSeedPod(ctx, target.Model, target.HFCacheDir, nodeName, prefix, labels)
+		default:
+			err = fmt.Errorf("unsupported seed target type %q", target.Type)
+		}
 		if err != nil {
 			if trackSeedState {
 				delete(e.inFlight, nodeName)

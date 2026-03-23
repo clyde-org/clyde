@@ -17,8 +17,15 @@ grafanaDashboard:
   enabled: true
 
 pip:
-  # -- this is where pip data such as .whl or tar.gz files will be stored                         
+  # -- hostPath used for pip package cache (.whl/.tar.gz) and rewritten index html
   pipCacheDir: "/data/cache/pip/wheel"
+  # -- hostPath mounted into init container to write /etc/pip.conf
+  pipConfigPath: "/etc"
+  # -- timeout used by pip-configuration init container when writing pip.conf
+  timeout: 300
+  # -- fallback upstream index used by pip handler when peer/local miss occurs
+  indexURL: "https://pypi.org/simple"
 
 hf:
+  # -- hostPath used for Hugging Face cache layout (refs/, snapshots/, blobs/)
   hfCacheDir: "/data/cache/hf/model"

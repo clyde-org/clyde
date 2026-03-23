@@ -7,6 +7,7 @@ type DoublingPlanner struct {
 	total   int  // Total nodes in the cluster
 	initial int  // Size of the first wave
 	started bool // Flag to track if we've moved past the first wave
+	last    int  // Last issued batch size
 }
 
 // NewDoublingPlanner calculates an initial seed density (10% or min 2)
@@ -31,6 +32,7 @@ func NewDoublingPlanner(total int, initialCount int) *DoublingPlanner {
 		total:   total,
 		initial: initialSeeds,
 		started: false,
+		last:    0,
 	}
 }
 
@@ -46,15 +48,29 @@ func (p *DoublingPlanner) Remaining() int {
 }
 
 func (p *DoublingPlanner) NextBatch() int {
+	return p.nextBatchInternal(-1)
+}
+
+// NextBatchCapped returns the next batch size but caps it to maxBatch when maxBatch >= 0.
+// If maxBatch <= 0, it returns 0 and does not advance planner state.
+func (p *DoublingPlanner) NextBatchCapped(maxBatch int) int {
+	if maxBatch <= 0 {
+		return 0
+	}
+	return p.nextBatchInternal(maxBatch)
+}
+
+func (p *DoublingPlanner) nextBatchInternal(maxBatch int) int {
 	var batch int
 
 	if !p.started {
 		// First Wave: The "Initial Density" phase
 		batch = p.initial
 		p.started = true
+		p.last = batch
 	} else {
-		// Subsequent Waves: Double the existing seeder capacity
-		batch = p.current
+		// Subsequent Waves: Double previous wave size (2 -> 4 -> 8 ...)
+		batch = p.last * 2
 	}
 
 	// Safety: Ensure the batch doesn't exceed remaining nodes
@@ -62,6 +78,15 @@ func (p *DoublingPlanner) NextBatch() int {
 		batch = p.total - p.current
 	}
 
+	// Optional cap for concurrency/running-slot control.
+	if maxBatch >= 0 && batch > maxBatch {
+		batch = maxBatch
+	}
+	if batch <= 0 {
+		return 0
+	}
+
 	p.current += batch
+	p.last = batch
 	return batch
 }

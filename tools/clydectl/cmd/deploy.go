@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"clydectl/internal/bandwidth"
@@ -16,16 +17,22 @@ import (
 
 var deployCmd = &cobra.Command{
 	Use:   "daemonset",
-	Short: "Seed image before deploying a DaemonSet",
+	Short: "Seed content before deploying a DaemonSet",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 
 		image, _ := cmd.Flags().GetString("image")
+		seedSource, _ := cmd.Flags().GetString("seed-source")
+		hfModel, _ := cmd.Flags().GetString("hf-model")
+		hfCacheDir, _ := cmd.Flags().GetString("hf-cache-dir")
+		useLocalProxy, _ := cmd.Flags().GetBool("use-local-proxy")
+		daemonsetFile, _ := cmd.Flags().GetString("daemonset-file")
 		name, _ := cmd.Flags().GetString("name")
 		namespace, _ := cmd.Flags().GetString("namespace")
 
 		initialSeeds, _ := cmd.Flags().GetInt("initial-seeds")
 		publicSeeds, _ := cmd.Flags().GetInt("public-seeds")
+		seedStopRatio, _ := cmd.Flags().GetFloat64("seed-stop-ratio")
 		disableBandwidthAware, _ := cmd.Flags().GetBool("disable-bandwidth-aware")
 		monitorInterval, _ := cmd.Flags().GetInt("monitor-interval")
 		monitorWindow, _ := cmd.Flags().GetInt("monitor-window")
@@ -48,7 +55,50 @@ var deployCmd = &cobra.Command{
 		if totalNodes == 0 {
 			return fmt.Errorf("no nodes found in cluster")
 		}
-		seedTargetNodes := (totalNodes + 1) / 2 // at least half of cluster nodes
+		runningSeedLimit := (totalNodes + 1) / 2
+		if seedStopRatio <= 0 || seedStopRatio > 1 {
+			return fmt.Errorf("seed-stop-ratio must be > 0 and <= 1, got %.3f", seedStopRatio)
+		}
+		seedTargetNodes := int(math.Ceil(float64(totalNodes) * seedStopRatio))
+		if seedTargetNodes < 1 {
+			seedTargetNodes = 1
+		}
+		if initialSeeds <= 0 {
+			// Auto initial seeds: 10% of full cluster (min 2), capped by seed target.
+			auto := int(math.Max(2, math.Floor(float64(totalNodes)*0.1)))
+			if auto > seedTargetNodes {
+				auto = seedTargetNodes
+			}
+			initialSeeds = auto
+		}
+
+		targetType, err := seed.ParseTargetType(seedSource)
+		if err != nil {
+			return err
+		}
+		seedTarget := seed.Target{
+			Type:       targetType,
+			Image:      image,
+			Model:      hfModel,
+			HFCacheDir: hfCacheDir,
+		}
+		if err := seedTarget.Validate(); err != nil {
+			return err
+		}
+		if daemonsetFile == "" && name == "" {
+			return fmt.Errorf("--name is required when --daemonset-file is not provided")
+		}
+		fmt.Printf("Seed source: %s (%s)\n", seedTarget.Type, seedTarget.Identifier())
+		deployFinalDaemonSet := func() error {
+			if daemonsetFile != "" {
+				fmt.Printf("Deploying DaemonSet from file: %s\n", daemonsetFile)
+				return client.DeployDaemonSetFromFile(ctx, daemonsetFile, namespace)
+			}
+			if seedTarget.Type == seed.TargetTypeHFModel {
+				return client.DeployHFModelDaemonSet(ctx, name, namespace, image, hfCacheDir, useLocalProxy)
+			}
+			return client.DeployDaemonSet(ctx, name, namespace, image)
+		}
 
 		executor := seed.NewExecutor(client)
 		if disableBandwidthAware {
@@ -58,25 +108,25 @@ var deployCmd = &cobra.Command{
 			for planner.HasNext() {
 				batchSize := planner.NextBatch()
 				fmt.Printf("--- Wave %d: Seeding %d nodes ---\n", wave, batchSize)
-				if err := executor.Seed(ctx, image, batchSize); err != nil {
+				if err := executor.Seed(ctx, seedTarget, batchSize); err != nil {
 					return fmt.Errorf("failed during wave %d: %w", wave, err)
 				}
 				wave++
 			}
 			fmt.Printf("Success: Seeded %d/%d nodes. Deploying final DaemonSet...\n", seedTargetNodes, totalNodes)
-			return client.DeployDaemonSet(ctx, name, namespace, image)
+			return deployFinalDaemonSet()
 		}
 
 		if kube.ClusterHasOnlyPublicNodes(nodes) {
 			fmt.Println("Detected public-capable cluster network. Using simplified source-pull path.")
 			if publicSeeds > 0 {
 				fmt.Printf("Seeding %d public nodes from source before deploy...\n", publicSeeds)
-				if err := executor.Seed(ctx, image, publicSeeds); err != nil {
+				if err := executor.Seed(ctx, seedTarget, publicSeeds); err != nil {
 					return fmt.Errorf("public seed phase failed: %w", err)
 				}
 			}
 			fmt.Println("Deploying DaemonSet...")
-			return client.DeployDaemonSet(ctx, name, namespace, image)
+			return deployFinalDaemonSet()
 		}
 
 		fmt.Println("Detected private/NAT cluster network. Starting monitored seed strategy...")
@@ -113,7 +163,7 @@ var deployCmd = &cobra.Command{
 
 		initialBatchSize := planner.NextBatch()
 		fmt.Printf("Initial seed batch: %d nodes\n", initialBatchSize)
-		initialBatch, err := executor.StartSeedBatch(ctx, image, initialBatchSize)
+		initialBatch, err := executor.StartSeedBatch(ctx, seedTarget, initialBatchSize)
 		if err != nil {
 			return fmt.Errorf("initial seed phase failed: %w", err)
 		}
@@ -188,18 +238,30 @@ var deployCmd = &cobra.Command{
 					fmt.Println("Decision: quality not healthy. Stopping monitoring and continuing classic doubling seeding.")
 					monitoringStopped = true
 				} else {
-						if planner.HasNext() {
-							nextBatch := planner.NextBatch()
+					if planner.HasNext() {
+						runningSeeds := executor.RunningSeedCount()
+						if runningSeeds >= runningSeedLimit {
+							fmt.Printf("Decision: quality healthy but %d seed nodes already running (limit=%d). Skipping expansion this window.\n", runningSeeds, runningSeedLimit)
+						} else {
+							availableSlots := runningSeedLimit - runningSeeds
+							nextBatch := planner.NextBatchCapped(availableSlots)
+							if nextBatch == 0 {
+								fmt.Printf("Decision: quality healthy but no available running slots (running=%d limit=%d). Skipping expansion this window.\n", runningSeeds, runningSeedLimit)
+								fmt.Println()
+								nextDecisionAt = nextDecisionAt.Add(time.Duration(monitorWindow) * time.Second)
+								return nil
+							}
 							fmt.Printf("Decision: quality healthy. Starting monitored doubling batch of %d nodes (remaining=%d)\n", nextBatch, planner.Remaining())
-							batch, err := executor.StartSeedBatch(ctx, image, nextBatch)
+							batch, err := executor.StartSeedBatch(ctx, seedTarget, nextBatch)
 							if err != nil {
 								return fmt.Errorf("failed to start monitored doubling batch: %w", err)
 							}
 							remainingWave = append(remainingWave, batch.PodNames...)
-						} else {
-							fmt.Println("Decision: quality healthy. Seeding target already reached.")
-							monitoringStopped = true
 						}
+					} else {
+						fmt.Println("Decision: quality healthy. Seeding target already reached.")
+						monitoringStopped = true
+					}
 				}
 				fmt.Println()
 				nextDecisionAt = nextDecisionAt.Add(time.Duration(monitorWindow) * time.Second)
@@ -225,7 +287,7 @@ var deployCmd = &cobra.Command{
 		for planner.HasNext() {
 			batchSize := planner.NextBatch()
 			fmt.Printf("--- Wave %d: Seeding %d nodes ---\n", wave, batchSize)
-			batch, err := executor.StartSeedBatch(ctx, image, batchSize)
+			batch, err := executor.StartSeedBatch(ctx, seedTarget, batchSize)
 			if err != nil {
 				return fmt.Errorf("failed starting wave %d: %w", wave, err)
 			}
@@ -247,17 +309,23 @@ var deployCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Seeding target reached (%d/%d nodes). Deploying final DaemonSet...\n", seedTargetNodes, totalNodes)
-		return client.DeployDaemonSet(ctx, name, namespace, image)
+		return deployFinalDaemonSet()
 	},
 }
 
 func init() {
 	deployCmd.Flags().String("image", "", "Container image to deploy")
+	deployCmd.Flags().String("seed-source", "image", "Seeding source type: image or hf-model")
+	deployCmd.Flags().String("hf-model", "", "Hugging Face model repo ID for --seed-source hf-model (example: deepseek-ai/DeepSeek-R1-Distill-Qwen-32B)")
+	deployCmd.Flags().String("hf-cache-dir", "/data/cache/hf/model", "Node-local cache path for Hugging Face model seeding")
+	deployCmd.Flags().Bool("use-local-proxy", true, "Set USE_LOCAL_PROXY env on deployed DaemonSet (used for hf-model daemonsets)")
+	deployCmd.Flags().String("daemonset-file", "", "Path to DaemonSet YAML to deploy instead of generated spec")
 	deployCmd.Flags().String("name", "", "DaemonSet name")
 	deployCmd.Flags().String("namespace", "default", "Namespace")
 
 	deployCmd.Flags().Int("initial-seeds", 0, "Number of initial seed nodes (default: 10% of cluster)")
 	deployCmd.Flags().Int("public-seeds", 0, "When nodes have public IPs, pre-seed this many nodes before direct deployment")
+	deployCmd.Flags().Float64("seed-stop-ratio", 1.0, "Stop seeding after this fraction of nodes are seeded (0 < ratio <= 1)")
 	deployCmd.Flags().Bool("disable-bandwidth-aware", false, "Disable monitoring and run classic doubling seeding strategy")
 	deployCmd.Flags().Int("monitor-interval", 2, "Private-path monitoring interval in seconds while initial seeds are pulling")
 	deployCmd.Flags().Int("monitor-window", 20, "Minimum monitoring window in seconds before first expansion decision")
@@ -267,7 +335,6 @@ func init() {
 	deployCmd.Flags().String("monitor-image", "", "Optional image used for progress-based monitor probing (default: --image)")
 
 	deployCmd.MarkFlagRequired("image")
-	deployCmd.MarkFlagRequired("name")
 }
 
 type monitorAggregate struct {

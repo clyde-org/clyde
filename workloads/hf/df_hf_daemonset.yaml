@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: hf-exp
+spec:
+  selector:
+    matchLabels:
+      app: hf-exp
+  template:
+    metadata:
+      labels:
+        app: hf-exp
+    spec:
+      # Allow pods to run on control-plane nodes
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      containers:
+        - name: hf-exp
+          image: ghcr.io/clyde-org/hf.exp:v1.5
+          imagePullPolicy: Always

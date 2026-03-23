@@ -61,10 +61,10 @@ func TestRemaining(t *testing.T) {
 		t.Fatalf("Remaining() after first batch = %d, want 8", got)
 	}
 
-	if got := p.NextBatch(); got != 2 {
-		t.Fatalf("second NextBatch() = %d, want 2", got)
+	if got := p.NextBatch(); got != 4 {
+		t.Fatalf("second NextBatch() = %d, want 4", got)
 	}
-	if got := p.Remaining(); got != 6 {
-		t.Fatalf("Remaining() after second batch = %d, want 6", got)
+	if got := p.Remaining(); got != 4 {
+		t.Fatalf("Remaining() after second batch = %d, want 4", got)
 	}
 }

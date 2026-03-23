@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-prebaked
+  labels:
+    app: vllm-prebaked
+spec:
+  type: LoadBalancer
+  selector:
+    app: vllm-prebaked
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000

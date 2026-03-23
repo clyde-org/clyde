@@ -32,8 +32,8 @@ spec:
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       priorityClassName: {{ .Values.priorityClassName }}
-      {{- if .Values.clyde.containerdMirrorAdd }}
       initContainers:
+      {{- if .Values.clyde.containerdMirrorAdd }}
       - name: configuration
         image: "{{ include "clyde.image" . }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -72,6 +72,7 @@ spec:
             mountPath: "/etc/secrets/basic-auth"
             readOnly: true
           {{- end }}
+      {{- end }}
 
       - name: pip-configuration
         image: "{{ include "clyde.image" . }}"
@@ -93,7 +94,7 @@ spec:
         volumeMounts:
           - name: pip-config
             mountPath: {{ .Values.pip.pipConfigPath }}
-      {{- end }}
+
       - name: huggingface-configuration
         image: "{{ include "clyde.image" . }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -140,6 +141,10 @@ spec:
           {{- end }}
           - --debug-web-enabled={{ .Values.clyde.debugWebEnabled }}
           - --enable-pip-proxy={{ .Values.clyde.enablePipProxy }}
+          - --pip-cache-dir={{ .Values.pip.pipCacheDir }}
+          - --pip-config-path={{ .Values.pip.pipConfigPath }}
+          - --index-url={{ .Values.pip.indexURL }}
+          - --hf-cache-dir={{ .Values.hf.hfCacheDir }}
         env:
         {{- if ((.Values.resources).limits).cpu }}
         - name: GOMAXPROCS

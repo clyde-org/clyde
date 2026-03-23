@@ -14,4 +14,5 @@ spec:
       containers:
         - name: deepseek-r1-distill-llama-8b
           image: ghcr.io/clyde-org/deepseek.r1.distill.llama.8b-arm:v1.0
-          imagePullPolicy: Always
+          #image: sneceesay77/deepseek.r1.distill.llama.8b-arm:v1.0
+          imagePullPolicy: IfNotPresent
