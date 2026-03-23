@@ -43,6 +43,13 @@ Please follow the [build](./docs/build.md) guide for details on building the pro
 
 Please follow the [install](./docs/install.md) guide to get started.
 
+### clydectl
+
+`clydectl` is Clyde's deployment CLI for seed-aware DaemonSet rollout, supporting
+both image-based and Hugging Face model-based seeding workflows.
+For command usage, flags, and end-to-end examples, see the
+[`clydectl` README](./tools/clydectl/README.md).
+
 ## Contribution
 
 We welcome new contributors! And we are happy to provide guidance and help for new contributors. Clyde follows the standard Go formatting conventions. If you find a bug or have some ideas, please submit an issue.
