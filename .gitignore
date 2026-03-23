@@ -36,3 +36,7 @@ log*.log
 
 tools/seeding/__pycache__
 tools/clydectl/model_blob.tar.gz
+
+zz-fast-paper/
+tools/setup/
+.mplcache/
