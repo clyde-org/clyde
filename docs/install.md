@@ -163,6 +163,17 @@ PACKAGES = [
 ]
 ```
 
+### Cold start (no local cache)
+
+Separate **13-node** check with a DaemonSet **image-pull** workload: **no warm cache and no seed image** on any node (one cold pull per node per run). Times are the script-reported pull duration per pod (seconds); means are over **13** pods.
+
+| Image (notes) | Approx. size | Notes | Mean pull (13 pods) |
+| --- | --- | --- | --- |
+| `tensorflow/tensorflow` | ~1 GB | Two back-to-back cold runs (upstream variance) | ~61 s, then ~85 s |
+| vLLM (Ascend, capture label) | ~5.6 GB | Baseline-style path vs Clyde **content-create** path | **~734 s → ~201 s** (~73% lower mean) |
+
+Exact tags were not pinned in the capture; treat the vLLM pair as the same approximate image size with different materialization behavior, not a strict A/B on two different digests.
+
 ### Results
 These results are based on our cluster setup and the performance depends on the bandwidth to the baseline repo and the bandwidth between the nodes. However the performance improvement should be consistent if a different environment is used. 
 
