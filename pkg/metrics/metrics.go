@@ -1,7 +1,7 @@
 package metrics
 
 import (
-	"clyde/pkg/mux"
+	"clyde/pkg/httpx"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -20,17 +20,17 @@ var (
 		Help:      "Total number of mirror requests.",
 	}, []string{"registry", "cache"})
 
+	MirrorLastSuccessTimestamp = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Name:      "mirror_last_success_timestamp_seconds",
+		Help:      "The timestamp of the last successful mirror request.",
+	})
+
 	ResolveDurHistogram = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: namespace,
 		Name:      "resolve_duration_seconds",
 		Help:      "The duration for router to resolve a peer.",
 	}, []string{"router"})
-
-	AdvertisedImages = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: namespace,
-		Name:      "advertised_images",
-		Help:      "Number of images advertised to be available.",
-	}, []string{"registry"})
 
 	AdvertisedImageTags = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: namespace,
@@ -44,10 +44,10 @@ var (
 		Help:      "Number of image digests advertised to be available.",
 	}, []string{"registry"})
 
-	AdvertisedKeys = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	AdvertisedContentDigests = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: namespace,
-		Name:      "advertised_keys",
-		Help:      "Number of keys advertised to be available.",
+		Name:      "advertised_content_digests",
+		Help:      "Number of content digests advertised to be available.",
 	}, []string{"registry"})
 
 	AdvertisedPipPackage = prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -65,12 +65,12 @@ var (
 
 func Register() {
 	DefaultRegisterer.MustRegister(MirrorRequestsTotal)
+	DefaultRegisterer.MustRegister(MirrorLastSuccessTimestamp)
 	DefaultRegisterer.MustRegister(ResolveDurHistogram)
-	DefaultRegisterer.MustRegister(AdvertisedImages)
 	DefaultRegisterer.MustRegister(AdvertisedImageTags)
 	DefaultRegisterer.MustRegister(AdvertisedImageDigests)
-	DefaultRegisterer.MustRegister(AdvertisedKeys)
+	DefaultRegisterer.MustRegister(AdvertisedContentDigests)
 	DefaultRegisterer.MustRegister(AdvertisedPipPackage)
 	DefaultRegisterer.MustRegister(AdvertisedHFModel)
-	mux.RegisterMetrics(DefaultRegisterer)
+	httpx.RegisterMetrics(DefaultRegisterer)
 }

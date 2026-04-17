@@ -5,6 +5,10 @@ metadata:
   namespace: {{ include "clyde.namespace" . }}
   labels:
     {{- include "clyde.labels" . | nindent 4 }}
+  {{- with .Values.daemonsetAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
   updateStrategy:
@@ -135,7 +139,12 @@ spec:
           - --containerd-registry-config-path={{ .Values.clyde.containerdRegistryConfigPath }}
           - --bootstrap-kind=dns
           - --dns-bootstrap-domain={{ include "clyde.fullname" . }}-bootstrap.{{ include "clyde.namespace" . }}.svc.{{ .Values.clusterDomain }}
-          - --resolve-latest-tag={{ .Values.clyde.resolveLatestTag }}
+          {{- with .Values.clyde.registryFilters }}
+          - --registry-filters
+          {{- range . }}
+          - {{ . | quote }}
+          {{- end }}
+          {{- end }}
           {{- with .Values.clyde.containerdContentPath }}
           - --containerd-content-path={{ . }}
           {{- end }}
@@ -179,12 +188,18 @@ spec:
           periodSeconds: 3
           failureThreshold: 60
           httpGet:
-            path: /healthz
+            path: {{ .Values.probes.startupPath }}
             port: registry
         readinessProbe:
           httpGet:
-            path: /healthz
+            path: {{ .Values.probes.readinessPath }}
             port: registry
+        {{- if .Values.livenessProbe.enabled }}
+        livenessProbe:
+          httpGet:
+            path: {{ .Values.probes.livenessPath }}
+            port: registry
+        {{- end }}
         volumeMounts:
           {{- if .Values.basicAuthSecretName }}
           - name: basic-auth

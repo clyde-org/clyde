@@ -24,6 +24,9 @@ serviceAccount:
   # If not set and create is true, a name is generated using the fullname template.
   name: ""
 
+# -- Annotations to add to the DaemonSet.
+daemonsetAnnotations: {}
+
 # -- Annotations to add to the pod.
 podAnnotations: {}
 
@@ -55,15 +58,27 @@ service:
     hostPort: 30020
     # -- If true adds topology aware hints annotation to node port service.
     topologyAwareHintsEnabled: true
+    # -- Annotations to add to the registry service
+    annotations: {}
+    # -- Use PreferSameNode traffic distribution on the node port service
+    # instead of using an additional mirror registry on a container host port.
+    usePreferSameNodeTrafficDistribution: false
   router:
     # -- Port to expose the router via the service.
     port: 5001
   metrics:
     # -- Port to expose the metrics via the service.
     port: 9090
+    # -- Annotations to add to the metrics service
+    annotations: {}
+  bootstrap:
+    # -- Annotations to add to the bootstrap service
+    annotations: {}
   cleanup:
     # -- Port to expose cleanup probe on.
     port: 8080
+    # -- Annotations to add to the cleanup service (used in post-delete hook)
+    annotations: {}
 
 # -- Resource requests and limits for the Clyde container.
 resources:
@@ -118,14 +133,23 @@ serviceMonitor:
 grafanaDashboard:
   # -- If true creates a Grafana dashboard.
   enabled: false
-  # -- Label that ConfigMaps should have to be loaded as dashboards.
-  sidecarLabel: "grafana_dashboard"
-  # -- Label value that ConfigMaps should have to be loaded as dashboards.
-  sidecarLabelValue: "1"
-  # -- Annotations that ConfigMaps can have to get configured in Grafana,
-  # See: sidecar.dashboards.folderAnnotation for specifying the dashboard folder.
-  # https://github.com/grafana/helm-charts/tree/main/charts/grafana
+  # -- Mode for Grafana dashboard creation. Valid values are `Sidecar` and `GrafanaOperator`.
+  mode: Sidecar
+  # -- Labels to add to the Sidecar configMap or GrafanaDashboard.
+  labels: {}
+    # grafana_dashboard: "1"
+  # -- Annotations to add to the Sidecar configMap or GrafanaDashboard.
   annotations: {}
+    # grafana_folder: "Clyde"
+  grafanaOperator:
+    # -- If true allows for a Grafana in any namespace to access this GrafanaDashboard.
+    allowCrossNamespaceImport: true
+    # -- Folder to create the dashboard in.
+    folder: ""
+    # -- Resync period for the Grafana operator to check for updates to the dashboard.
+    resyncPeriod: "10m"
+    # -- Selected labels for Grafana instance.
+    matchLabels: {}
 
 # -- Priority class name to use for the pod.
 priorityClassName: system-node-critical
@@ -158,12 +182,14 @@ clyde:
   containerdMirrorAdd: true
   # -- When true Clyde will resolve tags to digests.
   resolveTags: true
-  # -- When true latest tags will be resolved to digests.
-  resolveLatestTag: true
+  # -- Regular expressions to filter out tags/registries. If empty, all registries/tags are resolved.
+  registryFilters: []
+    # - ".*:latest$"
+    # - "^docker\\.io/"
   # -- When true existing mirror configuration will be kept and Clyde will prepend it's configuration.
   prependExisting: false
   # -- When true enables debug web page.
-  debugWebEnabled: false
+  debugWebEnabled: true
   # -- Whether to enable PIP proxy
   enablePipProxy: true
 
@@ -214,3 +240,15 @@ verticalPodAutoscaler:
     # -- Specifies whether recommended updates are applied when a Pod is started and whether recommended updates
     # are applied during the life of a Pod. Possible values are "Off", "Initial", "Recreate", and "Auto".
     updateMode: Auto
+
+livenessProbe:
+  # -- When enabled a liveness probe will be added to the registry.
+  enabled: false
+
+probes:
+  # -- Startup probe path for the registry container.
+  startupPath: /readyz
+  # -- Readiness probe path for the registry container.
+  readinessPath: /readyz
+  # -- Liveness probe path for the registry container (when enabled).
+  livenessPath: /livez

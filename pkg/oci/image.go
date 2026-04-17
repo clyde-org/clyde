@@ -3,56 +3,41 @@ package oci
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
-	"regexp"
 	"strings"
 
 	digest "github.com/opencontainers/go-digest"
+
+	"clyde/internal/option"
+)
+
+const (
+	DefaultRegistry  = "docker.io"
+	DefaultNamespace = "library"
+	DefaultTag       = "latest"
 )
 
 type Image struct {
-	Registry   string
-	Repository string
-	Tag        string
-	Digest     digest.Digest
+	Reference
 }
 
 func NewImage(registry, repository, tag string, dgst digest.Digest) (Image, error) {
-	if registry == "" {
-		return Image{}, errors.New("image needs to contain a registry")
-	}
-	if repository == "" {
-		return Image{}, errors.New("image needs to contain a repository")
-	}
-	if dgst != "" {
-		if err := dgst.Validate(); err != nil {
-			return Image{}, err
-		}
-	}
-	return Image{
+	ref := Reference{
 		Registry:   registry,
 		Repository: repository,
 		Tag:        tag,
 		Digest:     dgst,
+	}
+	if err := ref.Validate(); err != nil {
+		return Image{}, err
+	}
+	return Image{
+		Reference: ref,
 	}, nil
 }
 
-func (i Image) IsLatestTag() bool {
-	return i.Tag == "latest"
-}
-
-func (i Image) String() string {
-	tag := ""
-	if i.Tag != "" {
-		tag = ":" + i.Tag
-	}
-	digest := ""
-	if i.Digest != "" {
-		digest = "@" + i.Digest.String()
-	}
-	return fmt.Sprintf("%s/%s%s%s", i.Registry, i.Repository, tag, digest)
-}
-
+// TagName returns the full tag reference string if tag is set.
 func (i Image) TagName() (string, bool) {
 	if i.Tag == "" {
 		return "", false
@@ -60,67 +45,176 @@ func (i Image) TagName() (string, bool) {
 	return fmt.Sprintf("%s/%s:%s", i.Registry, i.Repository, i.Tag), true
 }
 
-var splitRe = regexp.MustCompile(`[:@]`)
-
-func ParseImage(s string) (Image, error) {
-	if strings.Contains(s, "://") {
-		return Image{}, errors.New("invalid reference")
+// DistributionPath returns the distribution path for the images top layer.
+func (i Image) DistributionPath() DistributionPath {
+	ref := i.Reference
+	if ref.Digest != "" {
+		ref.Tag = ""
 	}
-	u, err := url.Parse("dummy://" + s)
+	return DistributionPath{
+		Reference: ref,
+		Kind:      DistributionKindManifest,
+	}
+}
+
+type ParseImageConfig struct {
+	Digest        digest.Digest
+	RequireDigest bool
+	Strict        bool
+}
+
+type ParseImageOption = option.Option[ParseImageConfig]
+
+// WithDigest adds an additional digest outside of the parsed string.
+func WithDigest(dgst digest.Digest) ParseImageOption {
+	return func(cfg *ParseImageConfig) error {
+		cfg.Digest = dgst
+		return nil
+	}
+}
+
+// AllowTagOnly disables enforcement of digest in parsed image.
+func AllowTagOnly() ParseImageOption {
+	return func(cfg *ParseImageConfig) error {
+		cfg.RequireDigest = false
+		return nil
+	}
+}
+
+// AllowDefaults disables strict validation of image references and appends defaults.
+func AllowDefaults() ParseImageOption {
+	return func(cfg *ParseImageConfig) error {
+		cfg.Strict = false
+		return nil
+	}
+}
+
+// ParseImage parses the image reference.
+func ParseImage(s string, opts ...ParseImageOption) (Image, error) {
+	cfg := ParseImageConfig{
+		RequireDigest: true,
+		Strict:        true,
+	}
+	err := option.Apply(&cfg, opts...)
 	if err != nil {
 		return Image{}, err
 	}
-	if u.Scheme != "dummy" {
-		return Image{}, errors.New("invalid reference")
+
+	registry, repository, tag, dgst, err := parseImage(s)
+	if err != nil {
+		return Image{}, err
 	}
-	if u.Host == "" {
-		return Image{}, errors.New("hostname required")
-	}
-	var object string
-	if idx := splitRe.FindStringIndex(u.Path); idx != nil {
-		// This allows us to retain the @ to signify digests or shortened digests in
-		// the object.
-		object = u.Path[idx[0]:]
-		if object[:1] == ":" {
-			object = object[1:]
+	if cfg.Digest != "" {
+		if dgst != "" && dgst != cfg.Digest {
+			return Image{}, fmt.Errorf("set digest %s does not match parsed digest %s", dgst.String(), s)
 		}
-		u.Path = u.Path[:idx[0]]
+		dgst = cfg.Digest
 	}
-	tag, dgst := splitObject(object)
-	tag, _, _ = strings.Cut(tag, "@")
-	repository := strings.TrimPrefix(u.Path, "/")
-
-	img, err := NewImage(u.Host, repository, tag, dgst)
+	if cfg.RequireDigest {
+		if dgst == "" {
+			return Image{}, errors.New("image needs to contain a digest")
+		}
+	}
+	if !cfg.Strict {
+		if registry == "" {
+			registry = DefaultRegistry
+		}
+		if len(strings.Split(repository, "/")) == 1 && registry == DefaultRegistry {
+			repository = DefaultNamespace + "/" + repository
+		}
+		if tag == "" {
+			tag = DefaultTag
+		}
+	}
+	img, err := NewImage(registry, repository, tag, dgst)
 	if err != nil {
 		return Image{}, err
 	}
 	return img, nil
 }
 
-func ParseImageRequireDigest(s string, dgst digest.Digest) (Image, error) {
-	img, err := ParseImage(s)
-	if err != nil {
-		return Image{}, err
+func parseImage(s string) (string, string, string, digest.Digest, error) {
+	if strings.Contains(s, "://") {
+		return "", "", "", "", errors.New("invalid reference format")
 	}
-	if img.Digest != "" && dgst == "" {
-		return img, nil
+	comps := strings.Split(s, "/")
+	if len(comps) == 0 {
+		return "", "", "", "", errors.New("invalid reference format")
 	}
-	if img.Digest == "" && dgst == "" {
-		return Image{}, errors.New("image needs to contain a digest")
+
+	var registry string
+	if len(comps) > 1 {
+		ok, err := isRegistry(comps[0])
+		if err != nil {
+			return "", "", "", "", err
+		}
+		if ok {
+			registry = comps[0]
+			comps = comps[1:]
+		}
 	}
-	if img.Digest == "" && dgst != "" {
-		return NewImage(img.Registry, img.Repository, img.Tag, dgst)
+
+	last := comps[len(comps)-1]
+	_, dgstStr, ok := strings.Cut(last, "@")
+	var dgst digest.Digest
+	if ok {
+		var err error
+		dgst, err = digest.Parse(dgstStr)
+		if err != nil {
+			return "", "", "", "", err
+		}
+		last = strings.TrimSuffix(last, "@"+dgstStr)
 	}
-	if img.Digest != dgst {
-		return Image{}, fmt.Errorf("invalid digest set does not match parsed digest: %v %v", s, img.Digest)
+	_, tag, ok := strings.Cut(last, ":")
+	if ok {
+		if !tagRegex.MatchString(tag) {
+			return "", "", "", "", fmt.Errorf("tag %s is invalid", tag)
+		}
+		last = strings.TrimSuffix(last, ":"+tag)
 	}
-	return img, nil
+	comps[len(comps)-1] = last
+
+	repository := strings.Join(comps, "/")
+	if !repoRegex.MatchString(repository) {
+		return "", "", "", "", fmt.Errorf("repository %s is invalid", repository)
+	}
+
+	return registry, repository, tag, dgst, nil
 }
 
-func splitObject(obj string) (tag string, dgst digest.Digest) {
-	parts := strings.SplitAfterN(obj, "@", 2)
-	if len(parts) < 2 {
-		return parts[0], ""
+func isRegistry(s string) (bool, error) {
+	_, err := netip.ParseAddrPort(s)
+	if err == nil {
+		return true, nil
 	}
-	return parts[0], digest.Digest(parts[1])
+	trimmedIP := strings.TrimPrefix(s, "[")
+	trimmedIP = strings.TrimSuffix(trimmedIP, "]")
+	addr, err := netip.ParseAddr(trimmedIP)
+	if err == nil {
+		if addr.Is6() {
+			if s == trimmedIP {
+				return false, fmt.Errorf("ip6 address %s needs to be encaplsulated in square brackets", s)
+			}
+			return true, nil
+		}
+		return true, nil
+	}
+	// When parsing IPV6 URLs square brackets are not enforced.
+	// https://github.com/golang/go/issues/75223
+	u, err := url.Parse("//" + s)
+	if err != nil {
+		return false, err
+	}
+	if u.Host != s {
+		return false, fmt.Errorf("url host %s does not match registry string %s", u.Host, s)
+	}
+	hostname := u.Hostname()
+	if hostname == "localhost" {
+		return true, nil
+	}
+	// Single label domains that are not localhost is not a registry.
+	if !strings.Contains(hostname, ".") {
+		return false, nil
+	}
+	return true, nil
 }

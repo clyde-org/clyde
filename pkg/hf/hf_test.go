@@ -11,62 +11,49 @@ import (
 	"testing"
 	"time"
 
+	"clyde/pkg/httpx"
 	"clyde/pkg/routing"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/require"
 )
 
-type TestResponseWriter struct {
+var _ httpx.ResponseWriter = &testResponseWriter{}
+
+type testResponseWriter struct {
 	*httptest.ResponseRecorder
-	handler string
-	lastErr error
+	attrs       map[string]any
+	lastErr     error
+	wroteHeader bool
 }
 
-func newTestResponseWriter() *TestResponseWriter {
-	return &TestResponseWriter{
+func newTestResponseWriter() *testResponseWriter {
+	return &testResponseWriter{
 		ResponseRecorder: httptest.NewRecorder(),
+		attrs:            map[string]any{},
 	}
 }
 
-// Implement mux.ResponseWriter interface
-func (w *TestResponseWriter) Error() error {
-	return w.lastErr
+func (w *testResponseWriter) Error() error        { return w.lastErr }
+func (w *testResponseWriter) Size() int64          { return int64(w.ResponseRecorder.Body.Len()) }
+func (w *testResponseWriter) Status() int          { return w.ResponseRecorder.Code }
+func (w *testResponseWriter) HeadersWritten() bool { return w.wroteHeader }
+
+func (w *testResponseWriter) SetAttrs(key string, value any) {
+	w.attrs[key] = value
 }
 
-func (w *TestResponseWriter) Header() http.Header {
-	return w.ResponseRecorder.Header()
-}
-
-func (w *TestResponseWriter) Size() int64 {
-	return int64(w.ResponseRecorder.Body.Len())
-}
-
-func (w *TestResponseWriter) Status() int {
-	return w.ResponseRecorder.Code
-}
-
-func (w *TestResponseWriter) Write(b []byte) (int, error) {
-	return w.ResponseRecorder.Write(b)
-}
-
-func (w *TestResponseWriter) WriteHeader(statusCode int) {
+func (w *testResponseWriter) WriteHeader(statusCode int) {
+	w.wroteHeader = true
 	w.ResponseRecorder.WriteHeader(statusCode)
 }
 
-func (w *TestResponseWriter) SetHandler(name string) {
-	w.handler = name
-}
-
-func (w *TestResponseWriter) WriteError(code int, err error) {
+func (w *testResponseWriter) WriteError(code int, err error) {
 	w.lastErr = err
 	w.WriteHeader(code)
 	_, _ = w.Write([]byte(err.Error()))
 }
 
-// ------------------------------------------------------------
-// TEST HELPERS
-// ------------------------------------------------------------
 func newTestHFClient(t *testing.T, cacheDir string, router routing.Router) *HFClient {
 	t.Helper()
 	return NewHFClient(router, cacheDir,
@@ -84,9 +71,6 @@ func createTempHFFile(t *testing.T, base, rel, content string) string {
 	return p
 }
 
-// ------------------------------------------------------------
-// TEST: Client Configuration
-// ------------------------------------------------------------
 func TestHFClientOptions(t *testing.T) {
 	t.Parallel()
 
@@ -106,9 +90,6 @@ func TestHFClientOptions(t *testing.T) {
 	require.Equal(t, logr.Discard(), client.Log)
 }
 
-// ------------------------------------------------------------
-// TEST: Local Snapshot Resolution
-// ------------------------------------------------------------
 func TestHFHandler_LocalResolveHit(t *testing.T) {
 	t.Parallel()
 
@@ -133,15 +114,11 @@ func TestHFHandler_LocalResolveHit(t *testing.T) {
 	require.Equal(t, "hello-license", string(body))
 }
 
-// ------------------------------------------------------------
-// TEST: Blob Upstream Fallback
-// ------------------------------------------------------------
 func TestHFHandler_BlobFallbackToUpstream_Local(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
 
-	// Mock upstream server
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/blobs/") {
 			_, _ = w.Write([]byte("upstream-blob"))
@@ -166,15 +143,11 @@ func TestHFHandler_BlobFallbackToUpstream_Local(t *testing.T) {
 	require.Equal(t, "upstream-blob", string(body))
 }
 
-// ------------------------------------------------------------
-// TEST: P2P Resolution
-// ------------------------------------------------------------
 func TestHFHandler_ResolveP2PHit_Local(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
 
-	// Set up the local cache structure that the handler expects
 	modelDir := filepath.Join(tmp, "models--org--model")
 	refsDir := filepath.Join(modelDir, "refs")
 	snapshotsDir := filepath.Join(modelDir, "snapshots")
@@ -182,11 +155,8 @@ func TestHFHandler_ResolveP2PHit_Local(t *testing.T) {
 	require.NoError(t, os.MkdirAll(refsDir, 0755))
 	require.NoError(t, os.MkdirAll(snapshotsDir, 0755))
 
-	// Create a fake SHA for the ref
 	sha := "abc123def456"
 	require.NoError(t, os.WriteFile(filepath.Join(refsDir, "main"), []byte(sha), 0644))
-
-	// Create the snapshot directory (but not the actual file, since we want P2P to handle it)
 	require.NoError(t, os.MkdirAll(filepath.Join(snapshotsDir, sha), 0755))
 
 	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -220,9 +190,6 @@ func TestHFHandler_ResolveP2PHit_Local(t *testing.T) {
 	require.Equal(t, "peer-content", string(body))
 }
 
-// ------------------------------------------------------------
-// TEST: API Upstream Fallback
-// ------------------------------------------------------------
 func TestHFHandler_APIFallback_Local(t *testing.T) {
 	t.Parallel()
 
@@ -248,9 +215,6 @@ func TestHFHandler_APIFallback_Local(t *testing.T) {
 	require.Equal(t, "api-response", string(body))
 }
 
-// ------------------------------------------------------------
-// TEST: Unsupported Paths
-// ------------------------------------------------------------
 func TestHFHandler_Unsupported(t *testing.T) {
 	t.Parallel()
 
@@ -267,15 +231,11 @@ func TestHFHandler_Unsupported(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
-// ------------------------------------------------------------
-// TEST: Local Cache Resolution
-// ------------------------------------------------------------
 func TestHFHandler_ResolveLocalCacheHit(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
 
-	// Set up complete local cache structure with actual file
 	modelDir := filepath.Join(tmp, "models--org--model")
 	refsDir := filepath.Join(modelDir, "refs")
 	snapshotsDir := filepath.Join(modelDir, "snapshots")
@@ -286,13 +246,11 @@ func TestHFHandler_ResolveLocalCacheHit(t *testing.T) {
 	sha := "abc123def456"
 	require.NoError(t, os.WriteFile(filepath.Join(refsDir, "main"), []byte(sha), 0644))
 
-	// Create the actual file in snapshots directory
 	snapshotDir := filepath.Join(snapshotsDir, sha)
 	require.NoError(t, os.MkdirAll(snapshotDir, 0755))
 	cacheFile := filepath.Join(snapshotDir, "model.bin")
 	require.NoError(t, os.WriteFile(cacheFile, []byte("cached-content"), 0644))
 
-	// Use empty router - no P2P peers, should serve from local cache
 	router := routing.NewMemoryRouter(map[string][]netip.AddrPort{}, netip.AddrPort{})
 
 	client := NewHFClient(
@@ -314,21 +272,16 @@ func TestHFHandler_ResolveLocalCacheHit(t *testing.T) {
 	require.Equal(t, "cached-content", string(body))
 }
 
-// ------------------------------------------------------------
-// TEST: Upstream Fallback Resolution
-// ------------------------------------------------------------
 func TestHFHandler_ResolveUpstreamFallback(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
 
-	// Set up mock upstream server
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("upstream-content"))
 	}))
 	defer upstream.Close()
 
-	// Set up partial local cache structure (ref exists but file doesn't)
 	modelDir := filepath.Join(tmp, "models--org--model")
 	refsDir := filepath.Join(modelDir, "refs")
 	snapshotsDir := filepath.Join(modelDir, "snapshots")
@@ -338,11 +291,8 @@ func TestHFHandler_ResolveUpstreamFallback(t *testing.T) {
 
 	sha := "abc123def456"
 	require.NoError(t, os.WriteFile(filepath.Join(refsDir, "main"), []byte(sha), 0644))
-
-	// Create snapshot directory but not the file - file should be fetched from upstream
 	require.NoError(t, os.MkdirAll(filepath.Join(snapshotsDir, sha), 0755))
 
-	// Use empty router - no P2P peers available
 	router := routing.NewMemoryRouter(map[string][]netip.AddrPort{}, netip.AddrPort{})
 
 	client := NewHFClient(
@@ -362,4 +312,29 @@ func TestHFHandler_ResolveUpstreamFallback(t *testing.T) {
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Equal(t, "upstream-content", string(body))
+}
+
+func TestWalkHFCacheDir(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	modelDir := filepath.Join(tmp, "models--org--model")
+	sha := "abc123"
+	createTempHFFile(t, modelDir, "snapshots/"+sha+"/model.safetensors", "data")
+	createTempHFFile(t, modelDir, "snapshots/"+sha+"/config.json", "cfg")
+	createTempHFFile(t, modelDir, "blobs/sha256-deadbeef", "blob")
+
+	router := routing.NewMemoryRouter(map[string][]netip.AddrPort{}, netip.AddrPort{})
+	client := newTestHFClient(t, tmp, router)
+
+	keys, err := client.WalkHFCacheDir(t.Context())
+	require.NoError(t, err)
+	require.Len(t, keys, 2)
+
+	found := map[string]bool{}
+	for _, k := range keys {
+		found[k] = true
+	}
+	require.True(t, found["hf:/huggingface/org/model/resolve/"+sha+"/model.safetensors"])
+	require.True(t, found["hf:/huggingface/org/model/resolve/"+sha+"/config.json"])
 }

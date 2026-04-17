@@ -4,13 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"math/rand/v2"
 	"net/netip"
+	"regexp"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
 
-	"golang.org/x/sync/errgroup"
+	"math/rand/v2"
 
 	"github.com/go-logr/logr"
 	tlog "github.com/go-logr/logr/testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 
 	"clyde/pkg/oci"
 	"clyde/pkg/routing"
@@ -25,11 +27,13 @@ import (
 
 func TestTrack(t *testing.T) {
 	t.Parallel()
-	ociClient := oci.NewMemory()
+	ociStore := oci.NewMemory()
 
 	imgRefs := []string{
 		"docker.io/library/ubuntu:latest",
 		"ghcr.io/spegel-org/spegel:v0.0.9",
+		"quay.io/namespace/repo:latest",
+		"localhost:5000/test:latest",
 	}
 	imgs := []oci.Image{}
 	for _, imageStr := range imgRefs {
@@ -48,25 +52,39 @@ func TestTrack(t *testing.T) {
 		_, err = hash.Write(b)
 		require.NoError(t, err)
 		dgst := digest.NewDigest(digest.SHA256, hash)
-		ociClient.AddBlob(b, dgst)
-		img, err := oci.ParseImageRequireDigest(imageStr, dgst)
+		err = ociStore.Write(ocispec.Descriptor{Digest: dgst, MediaType: "dummy"}, b)
 		require.NoError(t, err)
-		ociClient.AddImage(img)
+		img, err := oci.ParseImage(imageStr, oci.WithDigest(dgst))
+		require.NoError(t, err)
+		ociStore.AddImage(img)
 
 		imgs = append(imgs, img)
 	}
 
 	tests := []struct {
-		name             string
-		resolveLatestTag bool
+		name            string
+		registryFilters []oci.Filter
+		expectedImages  []string
 	}{
 		{
-			name:             "resolve latest",
-			resolveLatestTag: true,
+			name:            "no filters",
+			registryFilters: []oci.Filter{},
+			expectedImages:  []string{"docker.io/library/ubuntu:latest", "ghcr.io/spegel-org/spegel:v0.0.9", "quay.io/namespace/repo:latest", "localhost:5000/test:latest"},
 		},
 		{
-			name:             "do not resolve latest",
-			resolveLatestTag: false,
+			name:            "filter docker.io only",
+			registryFilters: []oci.Filter{oci.RegexFilter{Regex: regexp.MustCompile(`^docker\.io/`)}},
+			expectedImages:  []string{"ghcr.io/spegel-org/spegel:v0.0.9", "quay.io/namespace/repo:latest", "localhost:5000/test:latest"},
+		},
+		{
+			name:            "filter multiple registries",
+			registryFilters: []oci.Filter{oci.RegexFilter{Regex: regexp.MustCompile(`^docker\.io/`)}, oci.RegexFilter{Regex: regexp.MustCompile(`^ghcr\.io/`)}},
+			expectedImages:  []string{"quay.io/namespace/repo:latest", "localhost:5000/test:latest"},
+		},
+		{
+			name:            "filter latest tags",
+			registryFilters: []oci.Filter{oci.RegexFilter{Regex: regexp.MustCompile(`:latest$`)}},
+			expectedImages:  []string{"ghcr.io/spegel-org/spegel:v0.0.9"},
 		},
 	}
 	for _, tt := range tests {
@@ -80,30 +98,36 @@ func TestTrack(t *testing.T) {
 			router := routing.NewMemoryRouter(map[string][]netip.AddrPort{}, netip.MustParseAddrPort("127.0.0.1:5000"))
 			g, gCtx := errgroup.WithContext(ctx)
 			g.Go(func() error {
-				return Track(gCtx, ociClient, router, tt.resolveLatestTag, nil, nil)
+				return Track(gCtx, ociStore, router, WithRegistryFilters(tt.registryFilters))
 			})
 			time.Sleep(100 * time.Millisecond)
 
+			// Check that all images are advertised by digest (this should always happen)
 			for _, img := range imgs {
-				peers, ok := router.Lookup(img.Digest.String())
-				require.True(t, ok)
+				peers, ok := router.Get(img.Digest.String())
+				require.True(t, ok, "Image digest %s should be advertised", img.Digest.String())
 				require.Len(t, peers, 1)
+			}
+
+			// Check that images have been filtered
+			for _, img := range imgs {
 				tagName, ok := img.TagName()
 				if !ok {
 					continue
 				}
-				peers, ok = router.Lookup(tagName)
-				if img.IsLatestTag() && !tt.resolveLatestTag {
-					require.False(t, ok)
-					continue
+				peers, ok := router.Get(tagName)
+				shouldBeAdvertised := slices.Contains(tt.expectedImages, tagName)
+				if shouldBeAdvertised {
+					require.True(t, ok, "Image %s should be advertised", tagName)
+					require.Len(t, peers, 1)
+				} else {
+					require.False(t, ok, "Image %s should NOT be advertised", tagName)
 				}
-				require.True(t, ok)
-				require.Len(t, peers, 1)
 			}
 
 			cancel()
 			err := g.Wait()
-			require.NoError(t, err)
+			require.ErrorIs(t, err, context.Canceled)
 		})
 	}
 }

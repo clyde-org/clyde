@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/go-logr/logr"
 
-	"clyde/internal/channel"
+	"clyde/internal/option"
 	"clyde/pkg/hf"
 	"clyde/pkg/metrics"
 	"clyde/pkg/oci"
@@ -16,141 +15,146 @@ import (
 	"clyde/pkg/routing"
 )
 
-func Track(ctx context.Context, ociClient oci.Client, router routing.Router, resolveLatestTag bool, pipClient pip.Pip, hfClient hf.Hf) error {
-	log := logr.FromContextOrDiscard(ctx)
-	eventCh, errCh, err := ociClient.Subscribe(ctx)
+type TrackerConfig struct {
+	Filters   []oci.Filter
+	PipClient pip.Pip
+	HfClient  hf.Hf
+}
+
+type TrackerOption = option.Option[TrackerConfig]
+
+func WithRegistryFilters(filters []oci.Filter) TrackerOption {
+	return func(cfg *TrackerConfig) error {
+		cfg.Filters = filters
+		return nil
+	}
+}
+
+func WithPipClient(pipClient pip.Pip) TrackerOption {
+	return func(cfg *TrackerConfig) error {
+		cfg.PipClient = pipClient
+		return nil
+	}
+}
+
+func WithHfClient(hfClient hf.Hf) TrackerOption {
+	return func(cfg *TrackerConfig) error {
+		cfg.HfClient = hfClient
+		return nil
+	}
+}
+
+func Track(ctx context.Context, ociStore oci.Store, router routing.Router, opts ...TrackerOption) error {
+	cfg := TrackerConfig{}
+	err := option.Apply(&cfg, opts...)
 	if err != nil {
 		return err
 	}
-	immediateCh := make(chan time.Time, 1)
-	immediateCh <- time.Now()
-	close(immediateCh)
-	expirationTicker := time.NewTicker(routing.KeyTTL - time.Minute)
-	defer expirationTicker.Stop()
-	tickerCh := channel.Merge(immediateCh, expirationTicker.C)
+
+	eventCh, err := ociStore.Subscribe(ctx)
+	if err != nil {
+		return err
+	}
+
+	keys := []string{}
+	imgs, err := ociStore.ListImages(ctx)
+	if err != nil {
+		return err
+	}
+	for _, img := range imgs {
+		if oci.MatchesFilter(img.Reference, cfg.Filters) {
+			continue
+		}
+		tagName, ok := img.TagName()
+		if ok {
+			keys = append(keys, tagName)
+			metrics.AdvertisedImageTags.WithLabelValues(img.Registry).Inc()
+		}
+		metrics.AdvertisedImageDigests.WithLabelValues(img.Registry).Inc()
+	}
+	contents, err := ociStore.ListContent(ctx)
+	if err != nil {
+		return err
+	}
+	for _, refs := range contents {
+		if allReferencesMatchFilter(refs, cfg.Filters) {
+			continue
+		}
+		for _, ref := range refs {
+			metrics.AdvertisedContentDigests.WithLabelValues(ref.Registry).Inc()
+		}
+		keys = append(keys, refs[0].Digest.String())
+	}
+	err = router.Advertise(ctx, keys)
+	if err != nil {
+		return err
+	}
+
+	if _, err := syncPip(ctx, cfg.PipClient, router); err != nil {
+		logr.FromContextOrDiscard(ctx).Error(err, "errors during initial pip sync")
+	}
+	if _, err := syncHF(ctx, cfg.HfClient, router); err != nil {
+		logr.FromContextOrDiscard(ctx).Error(err, "errors during initial HF sync")
+	}
+
+	logr.FromContextOrDiscard(ctx).Info("waiting for store events")
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
-		case <-tickerCh:
-			log.Info("running scheduled state update of data artifacts")
-			if err := all(ctx, ociClient, router, resolveLatestTag); err != nil {
-				log.Error(err, "received errors when updating all images")
-				continue
-			}
-
-			// refresh pip keys
-			if _, err := syncPip(ctx, pipClient, router); err != nil {
-				log.Error(err, "errors during pip resync")
-			}
-
-			if _, err := syncHF(ctx, hfClient, router); err != nil {
-				log.Error(err, "errors during hf resync")
-			}
-
+			return ctx.Err()
 		case event, ok := <-eventCh:
 			if !ok {
-				return errors.New("image event channel closed")
+				return errors.New("event channel closed")
 			}
-			log.Info("received image event", "image", event.Image.String(), "type", event.Type)
-			if _, err := update(ctx, ociClient, router, event, false, resolveLatestTag); err != nil {
-				log.Error(err, "received error when updating image")
+			err := handleEvent(ctx, router, event, cfg.Filters)
+			if err != nil {
+				logr.FromContextOrDiscard(ctx).Error(err, "could not handle event")
 				continue
 			}
-		case err, ok := <-errCh:
-			if !ok {
-				return errors.New("image error channel closed")
-			}
-			log.Error(err, "event channel error")
 		}
 	}
 }
 
-func all(ctx context.Context, ociClient oci.Client, router routing.Router, resolveLatestTag bool) error {
-	log := logr.FromContextOrDiscard(ctx).V(4)
-	imgs, err := ociClient.ListImages(ctx)
-	if err != nil {
-		return err
+func handleEvent(ctx context.Context, router routing.Router, event oci.OCIEvent, filters []oci.Filter) error {
+	if oci.MatchesFilter(event.Reference, filters) {
+		return nil
 	}
-
-	// TODO: Update metrics on subscribed events. This will require keeping state in memory to know about key count changes.
-	metrics.AdvertisedKeys.Reset()
-	metrics.AdvertisedImages.Reset()
-	metrics.AdvertisedImageTags.Reset()
-	metrics.AdvertisedImageDigests.Reset()
-	errs := []error{}
-	targets := map[string]any{}
-	for _, img := range imgs {
-		_, skipDigests := targets[img.Digest.String()]
-		// Handle the list re-sync as update events; this will also prevent the
-		// update function from setting metrics values.
-		event := oci.ImageEvent{Image: img, Type: oci.UpdateEvent}
-		log.Info("sync image event", "image", event.Image.String(), "type", event.Type)
-		keyTotal, err := update(ctx, ociClient, router, event, skipDigests, resolveLatestTag)
-		if err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		targets[img.Digest.String()] = nil
-		metrics.AdvertisedKeys.WithLabelValues(img.Registry).Add(float64(keyTotal))
-		metrics.AdvertisedImages.WithLabelValues(img.Registry).Add(1)
-		if img.Tag == "" {
-			metrics.AdvertisedImageDigests.WithLabelValues(event.Image.Registry).Add(1)
+	logr.FromContextOrDiscard(ctx).Info("OCI event", "ref", event.Reference.String(), "type", event.Type)
+	switch event.Type {
+	case oci.CreateEvent:
+		if event.Reference.Tag != "" {
+			metrics.AdvertisedImageTags.WithLabelValues(event.Reference.Registry).Inc()
 		} else {
-			metrics.AdvertisedImageTags.WithLabelValues(event.Image.Registry).Add(1)
+			metrics.AdvertisedContentDigests.WithLabelValues(event.Reference.Registry).Inc()
 		}
+		err := router.Advertise(ctx, []string{event.Reference.Identifier()})
+		if err != nil {
+			return err
+		}
+		return nil
+	case oci.DeleteEvent:
+		if event.Reference.Tag != "" {
+			metrics.AdvertisedImageTags.WithLabelValues(event.Reference.Registry).Dec()
+		} else {
+			metrics.AdvertisedContentDigests.WithLabelValues(event.Reference.Registry).Dec()
+		}
+		err := router.Withdraw(ctx, []string{event.Reference.Identifier()})
+		if err != nil {
+			return err
+		}
+		return nil
+	default:
+		return fmt.Errorf("unhandled event type %s", event.Type)
 	}
-	return errors.Join(errs...)
 }
 
-func update(ctx context.Context, ociClient oci.Client, router routing.Router, event oci.ImageEvent, skipDigests, resolveLatestTag bool) (int, error) {
-	log := logr.FromContextOrDiscard(ctx).V(4)
-
-	imageKeys := []string{}
-
-	// Handle image tags
-	if !(!resolveLatestTag && event.Image.IsLatestTag()) {
-		if tagName, ok := event.Image.TagName(); ok {
-			imageKeys = append(imageKeys, tagName)
+func allReferencesMatchFilter(refs []oci.Reference, filters []oci.Filter) bool {
+	for _, ref := range refs {
+		if !oci.MatchesFilter(ref, filters) {
+			return false
 		}
 	}
-
-	// Handle delete event
-	if event.Type == oci.DeleteEvent {
-		metrics.AdvertisedImages.WithLabelValues(event.Image.Registry).Sub(1)
-		log.Info("delete event, skipping digest and pip advertisement", "image", event.Image.String())
-		return 0, nil
-	}
-
-	// Handle image digests
-	if !skipDigests {
-		dgsts, err := oci.WalkImage(ctx, ociClient, event.Image)
-		if err != nil {
-			return 0, fmt.Errorf("could not get digests for image %s: %w", event.Image.String(), err)
-		}
-		imageKeys = append(imageKeys, dgsts...)
-	}
-
-	// Advertise image keys
-	if len(imageKeys) > 0 {
-		if err := router.Advertise(ctx, imageKeys); err != nil {
-			return 0, fmt.Errorf("could not advertise image keys for image %s: %w", event.Image.String(), err)
-		}
-		log.Info("advertised image keys", "count", len(imageKeys))
-	}
-
-	// Update metrics for new images
-	if event.Type == oci.CreateEvent {
-		metrics.AdvertisedImages.WithLabelValues(event.Image.Registry).Add(1)
-		if event.Image.Tag == "" {
-			metrics.AdvertisedImageDigests.WithLabelValues(event.Image.Registry).Add(1)
-		} else {
-			metrics.AdvertisedImageTags.WithLabelValues(event.Image.Registry).Add(1)
-		}
-	}
-
-	log.Info("update completed", "image", event.Image.String(), "imageKeys", len(imageKeys))
-	return len(imageKeys), nil
+	return true
 }
 
 func syncPip(ctx context.Context, pipClient pip.Pip, router routing.Router) (int, error) {
@@ -163,7 +167,6 @@ func syncPip(ctx context.Context, pipClient pip.Pip, router routing.Router) (int
 
 	metrics.AdvertisedPipPackage.Reset()
 
-	// Walk the pip cache directory
 	pipKeys, err := pipClient.WalkPipDir(ctx)
 	if err != nil {
 		log.Error(err, "could not walk pip cache directory")
@@ -171,12 +174,10 @@ func syncPip(ctx context.Context, pipClient pip.Pip, router routing.Router) (int
 	}
 
 	if len(pipKeys) == 0 {
-		log.Info("no pip packages found, metric will be zero")
 		metrics.AdvertisedPipPackage.WithLabelValues("pip-cache").Set(0)
 		return 0, nil
 	}
 
-	// Advertise pip keys to router
 	if err := router.Advertise(ctx, pipKeys); err != nil {
 		log.Error(err, "could not advertise pip keys")
 		return 0, fmt.Errorf("could not advertise pip keys: %w", err)
@@ -197,7 +198,6 @@ func syncHF(ctx context.Context, hfClient hf.Hf, router routing.Router) (int, er
 
 	metrics.AdvertisedHFModel.Reset()
 
-	// Walk the Hugging Face cache directory
 	hfKeys, err := hfClient.WalkHFCacheDir(ctx)
 	if err != nil {
 		log.Error(err, "could not walk HF cache directory")
@@ -205,12 +205,10 @@ func syncHF(ctx context.Context, hfClient hf.Hf, router routing.Router) (int, er
 	}
 
 	if len(hfKeys) == 0 {
-		log.Info("no Hugging Face models found, metric will be zero")
 		metrics.AdvertisedHFModel.WithLabelValues("hf-cache").Set(0)
 		return 0, nil
 	}
 
-	// Advertise HF keys to router
 	if err := router.Advertise(ctx, hfKeys); err != nil {
 		log.Error(err, "could not advertise HF keys")
 		return 0, fmt.Errorf("could not advertise HF keys: %w", err)

@@ -4,13 +4,10 @@ import (
 	"context"
 	"net/http"
 
-	"clyde/pkg/mux"
+	"clyde/pkg/httpx"
 )
 
-// Pip defines the minimal interface for a pip client/proxy.
 type Hf interface {
-	// PipRegistryHandler handles incoming pip registry requests (/simple, /packages).
-	HuggingFaceRegistryHandler(rw mux.ResponseWriter, req *http.Request)
-	// WalkPipDir scans the pip cache directory and returns all keys (.whl, .html).
+	HuggingFaceRegistryHandler(rw httpx.ResponseWriter, req *http.Request)
 	WalkHFCacheDir(ctx context.Context) ([]string, error)
 }

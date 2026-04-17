@@ -1,4 +1,4 @@
-package mux
+package httpx
 
 import "github.com/prometheus/client_golang/prometheus"
 
@@ -12,7 +12,8 @@ var (
 		Subsystem: "http",
 		Name:      "response_size_bytes",
 		Help:      "The size of the HTTP responses.",
-		Buckets:   prometheus.ExponentialBuckets(1024, 5, 10),
+		// 1kB up to 2GB
+		Buckets: prometheus.ExponentialBuckets(1024, 5, 10),
 	}, []string{"handler", "method", "code"})
 	HttpRequestsInflight = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Subsystem: "http",
