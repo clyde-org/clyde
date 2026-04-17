@@ -174,6 +174,8 @@ Separate **13-node** check with a DaemonSet **image-pull** workload: **no warm c
 
 Exact tags were not pinned in the capture; treat the vLLM pair as the same approximate image size with different materialization behavior, not a strict A/B on two different digests.
 
+![Cold start pull time (13 nodes, no cache / no seed)](img/cold-start-chart.png)
+
 ### Results
 These results are based on our cluster setup and the performance depends on the bandwidth to the baseline repo and the bandwidth between the nodes. However the performance improvement should be consistent if a different environment is used. 
 
