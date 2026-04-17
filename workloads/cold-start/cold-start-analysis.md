@@ -11,6 +11,6 @@
 	envelopeCh, cErrCh := c.client.EventService().Subscribe(subCtx, eventFilters...)
 ```
 
-![Cold start — Baseline vs Clyde](../../docs/img/cold-start-chart.png)
+<img src="../../docs/img/cold-start-chart.png" alt="Cold start — Baseline vs Clyde" width="432" />
 
 Regenerate: `mkdir -p .mplconfig && MPLCONFIGDIR="$PWD/.mplconfig" ./.venv/bin/python generate_cold_start_report.py`
