@@ -12,62 +12,48 @@ import (
 	"testing"
 	"time"
 
+	"clyde/pkg/httpx"
 	"clyde/pkg/routing"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/require"
 )
 
-// --- TestResponseWriter adapts httptest.ResponseRecorder to mux.ResponseWriter ---
+var _ httpx.ResponseWriter = &testResponseWriter{}
 
-type TestResponseWriter struct {
+type testResponseWriter struct {
 	*httptest.ResponseRecorder
-	handler string
-	lastErr error
+	attrs       map[string]any
+	lastErr     error
+	wroteHeader bool
 }
 
-func newTestResponseWriter() *TestResponseWriter {
-	return &TestResponseWriter{
+func newTestResponseWriter() *testResponseWriter {
+	return &testResponseWriter{
 		ResponseRecorder: httptest.NewRecorder(),
+		attrs:            map[string]any{},
 	}
 }
 
-// Implement mux.ResponseWriter interface
-func (w *TestResponseWriter) Error() error {
-	return w.lastErr
+func (w *testResponseWriter) Error() error        { return w.lastErr }
+func (w *testResponseWriter) Size() int64          { return int64(w.ResponseRecorder.Body.Len()) }
+func (w *testResponseWriter) Status() int          { return w.ResponseRecorder.Code }
+func (w *testResponseWriter) HeadersWritten() bool { return w.wroteHeader }
+
+func (w *testResponseWriter) SetAttrs(key string, value any) {
+	w.attrs[key] = value
 }
 
-func (w *TestResponseWriter) Header() http.Header {
-	return w.ResponseRecorder.Header()
-}
-
-func (w *TestResponseWriter) Size() int64 {
-	return int64(w.ResponseRecorder.Body.Len())
-}
-
-func (w *TestResponseWriter) Status() int {
-	return w.ResponseRecorder.Code
-}
-
-func (w *TestResponseWriter) Write(b []byte) (int, error) {
-	return w.ResponseRecorder.Write(b)
-}
-
-func (w *TestResponseWriter) WriteHeader(statusCode int) {
+func (w *testResponseWriter) WriteHeader(statusCode int) {
+	w.wroteHeader = true
 	w.ResponseRecorder.WriteHeader(statusCode)
 }
 
-func (w *TestResponseWriter) SetHandler(name string) {
-	w.handler = name
-}
-
-func (w *TestResponseWriter) WriteError(code int, err error) {
+func (w *testResponseWriter) WriteError(code int, err error) {
 	w.lastErr = err
 	w.WriteHeader(code)
 	_, _ = w.Write([]byte(err.Error()))
 }
-
-// --- PipClient option tests ---
 
 func TestPipClientOptions(t *testing.T) {
 	t.Parallel()
@@ -89,8 +75,6 @@ func TestPipClientOptions(t *testing.T) {
 	require.Equal(t, logr.Discard(), client.Log)
 	require.Equal(t, 30*time.Second, client.Client.Timeout)
 }
-
-// --- PipRegistryHandler tests ---
 
 func TestPipRegistryHandlerRootIndex(t *testing.T) {
 	t.Parallel()
@@ -171,7 +155,6 @@ func TestPipRegistryHandlerP2PResolution(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(body), "peer wheel content")
 
-	// Cached locally
 	cacheFile := filepath.Join(tempDir, "peerpkg-1.0.0-py3-none-any.whl")
 	require.FileExists(t, cacheFile)
 }
@@ -198,7 +181,6 @@ func TestPipRegistryHandlerFallback(t *testing.T) {
 		expectedBody string
 	}{
 		{"fallback index", "/simple/unknownpkg/", "fallback index content"},
-		// {"fallback wheel", "/packages/unknownpkg-1.0.0-py3-none-any.whl", "fallback wheel content"},
 	}
 
 	for _, tt := range tests {
@@ -219,10 +201,6 @@ func TestPipRegistryHandlerFallback(t *testing.T) {
 	}
 }
 
-// --- Additional tests like index rewriting, artifact caching, error cases ---
-// These can follow the same pattern: use newTestResponseWriter() as the mux.ResponseWriter
-
-// Example of AddPipConfiguration test
 func TestAddPipConfiguration(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
@@ -238,4 +216,32 @@ func TestAddPipConfiguration(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(content), "index-url = https://pypi.org/simple/")
 	require.Contains(t, string(content), "trusted-host = pypi.org")
+}
+
+func TestWalkPipDir(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "foo-1.0.whl"), []byte("whl"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "bar-2.0.tar.gz"), []byte("tgz"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "baz.html"), []byte("idx"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "README.txt"), []byte("skip"), 0644))
+
+	router := routing.NewMemoryRouter(map[string][]netip.AddrPort{}, netip.AddrPort{})
+	client := NewPipClient(router, tempDir, "https://pypi.org/simple/",
+		WithLogger(logr.Discard()),
+	)
+
+	keys, err := client.WalkPipDir(context.Background())
+	require.NoError(t, err)
+	require.Len(t, keys, 3)
+
+	found := map[string]bool{}
+	for _, k := range keys {
+		found[k] = true
+	}
+	require.True(t, found["pip:foo-1.0.whl"])
+	require.True(t, found["pip:bar-2.0.tar.gz"])
+	require.True(t, found["pip:baz.html"])
+	require.False(t, found["pip:readme.txt"])
 }

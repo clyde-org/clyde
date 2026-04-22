@@ -6,12 +6,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"regexp"
 	"testing"
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/require"
 
+	"clyde/internal/option"
+	"clyde/pkg/httpx"
 	"clyde/pkg/oci"
 	"clyde/pkg/routing"
 )
@@ -19,46 +24,56 @@ import (
 func TestRegistryOptions(t *testing.T) {
 	t.Parallel()
 
-	transport := &http.Transport{}
-	log := logr.Discard()
+	filters := []oci.Filter{
+		oci.RegexFilter{Regex: regexp.MustCompile(`^docker.io/`)},
+		oci.RegexFilter{Regex: regexp.MustCompile(`^gcr.io/`)},
+	}
+	ociClient, err := oci.NewClient()
+	require.NoError(t, err)
+
 	opts := []RegistryOption{
 		WithResolveRetries(5),
-		WithResolveLatestTag(true),
+		WithRegistryFilters(filters),
 		WithResolveTimeout(10 * time.Minute),
-		WithTransport(transport),
-		WithLogger(log),
 		WithBasicAuth("foo", "bar"),
+		WithOCIClient(ociClient),
 	}
 	cfg := RegistryConfig{}
-	err := cfg.Apply(opts...)
+	err = option.Apply(&cfg, opts...)
 	require.NoError(t, err)
 	require.Equal(t, 5, cfg.ResolveRetries)
-	require.True(t, cfg.ResolveLatestTag)
+	require.Equal(t, filters, cfg.Filters)
 	require.Equal(t, 10*time.Minute, cfg.ResolveTimeout)
-	require.Equal(t, transport, cfg.Client.Transport)
-	require.Equal(t, log, cfg.Log)
+	require.Equal(t, ociClient, cfg.OCIClient)
 	require.Equal(t, "foo", cfg.Username)
 	require.Equal(t, "bar", cfg.Password)
 }
 
-func TestReadyHandler(t *testing.T) {
+func TestProbeHandlers(t *testing.T) {
 	t.Parallel()
 
 	router := routing.NewMemoryRouter(map[string][]netip.AddrPort{}, netip.MustParseAddrPort("127.0.0.1:8080"))
-	reg, err := NewRegistry(nil, router, nil, nil)
+	reg, err := NewRegistry(nil, router)
 	require.NoError(t, err)
-	srv, err := reg.Server("")
-	require.NoError(t, err)
+	handler := reg.Handler(logr.Discard())
 
 	rw := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "http://localhost/healthz", nil)
-	srv.Handler.ServeHTTP(rw, req)
-	require.Equal(t, http.StatusInternalServerError, rw.Result().StatusCode)
-
-	router.Add("foo", netip.MustParseAddrPort("127.0.0.1:9090"))
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/readyz", nil)
+	handler.ServeHTTP(rw, req)
+	require.Equal(t, http.StatusOK, rw.Result().StatusCode)
 	rw = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "http://localhost/healthz", nil)
-	srv.Handler.ServeHTTP(rw, req)
+	req = httptest.NewRequest(http.MethodGet, "http://localhost/livez", nil)
+	handler.ServeHTTP(rw, req)
+	require.Equal(t, http.StatusOK, rw.Result().StatusCode)
+
+	router.SetReadiness(false)
+	rw = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "http://localhost/readyz", nil)
+	handler.ServeHTTP(rw, req)
+	require.Equal(t, http.StatusInternalServerError, rw.Result().StatusCode)
+	rw = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "http://localhost/livez", nil)
+	handler.ServeHTTP(rw, req)
 	require.Equal(t, http.StatusOK, rw.Result().StatusCode)
 }
 
@@ -124,103 +139,214 @@ func TestBasicAuth(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			reg, err := NewRegistry(nil, nil, nil, nil, WithBasicAuth(tt.username, tt.password))
+			reg, err := NewRegistry(nil, nil, WithBasicAuth(tt.username, tt.password))
 			require.NoError(t, err)
 			rw := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, "http://localhost/v2/", nil)
 			req.SetBasicAuth(tt.reqUsername, tt.reqPassword)
-			srv, err := reg.Server("")
-			require.NoError(t, err)
-			srv.Handler.ServeHTTP(rw, req)
+			handler := reg.Handler(logr.Discard())
+			handler.ServeHTTP(rw, req)
 
 			require.Equal(t, tt.expected, rw.Result().StatusCode)
 		})
 	}
 }
 
-func TestMirrorHandler(t *testing.T) {
+func TestRegistryHandler(t *testing.T) {
 	t.Parallel()
 
-	badSvr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Header().Set("foo", "bar")
-		if r.Method == http.MethodGet {
-			//nolint:errcheck // ignore
-			w.Write([]byte("hello world"))
-		}
-	}))
-	t.Cleanup(func() {
-		badSvr.Close()
-	})
-	badAddrPort := netip.MustParseAddrPort(badSvr.Listener.Addr().String())
-	goodSvr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("foo", "bar")
-		if r.Method == http.MethodGet {
-			//nolint:errcheck // ignore
-			w.Write([]byte("hello world"))
-		}
-	}))
+	badAddrPorts := []netip.AddrPort{}
+	for range 2 {
+		badReg, err := NewRegistry(oci.NewMemory(), routing.NewMemoryRouter(map[string][]netip.AddrPort{}, netip.AddrPort{}))
+		require.NoError(t, err)
+		badSvr := httptest.NewServer(badReg.Handler(logr.Discard()))
+		t.Cleanup(func() {
+			badSvr.Close()
+		})
+		badAddrPort := netip.MustParseAddrPort(badSvr.Listener.Addr().String())
+		badAddrPorts = append(badAddrPorts, badAddrPort)
+	}
+
+	memStore := oci.NewMemory()
+	err := memStore.Write(ocispec.Descriptor{Digest: digest.Digest("sha256:18ca1296b9cc90d29b51b4a8724d97aa055102c3d74e53a8eafb3904c079c0c6"), MediaType: "dummy"}, []byte("no working peers"))
+	require.NoError(t, err)
+	err = memStore.Write(ocispec.Descriptor{Digest: digest.Digest("sha256:0b7e0ac6364af64af017531f137a95f3a5b12ea38be0e74a860004d3e5760a67"), MediaType: "dummy"}, []byte("first peer"))
+	require.NoError(t, err)
+	err = memStore.Write(ocispec.Descriptor{Digest: digest.Digest("sha256:431491e49ba5fa61930417a46b24c03b6df0b426b90009405457741ac52f44b2"), MediaType: "dummy"}, []byte("second peer"))
+	require.NoError(t, err)
+	err = memStore.Write(ocispec.Descriptor{Digest: digest.Digest("sha256:7d66cda2ba857d07e5530e53565b7d56b10ab80d16b6883fff8478327a49b4ba"), MediaType: "dummy"}, []byte("last peer working"))
+	require.NoError(t, err)
+	err = memStore.Write(ocispec.Descriptor{Digest: digest.Digest("sha256:ef3a5e9aba91d942f5f888b4e855e785395387aab0f122a6e49d0eaea215e98d"), MediaType: "application/vnd.oci.image.index.v1+json"}, []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}`))
+	require.NoError(t, err)
+	err = memStore.Write(ocispec.Descriptor{Digest: digest.Digest("sha256:ac73670af3abed54ac6fb4695131f4099be9fbe39d6076c5d0264a6bbdae9d83"), MediaType: "application/vnd.oci.image.layer.v1.tar+gzip"}, []byte{0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	require.NoError(t, err)
+	goodReg, err := NewRegistry(memStore, routing.NewMemoryRouter(map[string][]netip.AddrPort{}, netip.AddrPort{}))
+	require.NoError(t, err)
+	goodSvr := httptest.NewServer(goodReg.Handler(logr.Discard()))
 	t.Cleanup(func() {
 		goodSvr.Close()
 	})
 	goodAddrPort := netip.MustParseAddrPort(goodSvr.Listener.Addr().String())
+
 	unreachableAddrPort := netip.MustParseAddrPort("127.0.0.1:0")
 
 	resolver := map[string][]netip.AddrPort{
-		// No working peers
-		"sha256:c3e30fbcf3b231356a1efbd30a8ccec75134a7a8b45217ede97f4ff483540b04": {badAddrPort, unreachableAddrPort, badAddrPort},
-		// First Peer
-		"sha256:3b8a55c543ccc7ae01c47b1d35af5826a6439a9b91ab0ca96de9967759279896": {goodAddrPort, badAddrPort, badAddrPort},
-		// First peer error
-		"sha256:a0daab85ec30e2809a38c32fa676515aba22f481c56fda28637ae964ff398e3d": {unreachableAddrPort, goodAddrPort},
-		// Last peer working
-		"sha256:11242d2a347bf8ab30b9f92d5ca219bbbedf95df5a8b74631194561497c1fae8": {badAddrPort, badAddrPort, goodAddrPort},
+		// No working peers.
+		"sha256:18ca1296b9cc90d29b51b4a8724d97aa055102c3d74e53a8eafb3904c079c0c6": {badAddrPorts[0], unreachableAddrPort, badAddrPorts[1]},
+		// First peer.
+		"sha256:0b7e0ac6364af64af017531f137a95f3a5b12ea38be0e74a860004d3e5760a67": {goodAddrPort, badAddrPorts[0], badAddrPorts[1]},
+		// Second peer.
+		"sha256:431491e49ba5fa61930417a46b24c03b6df0b426b90009405457741ac52f44b2": {unreachableAddrPort, goodAddrPort},
+		// Last peer working.
+		"sha256:7d66cda2ba857d07e5530e53565b7d56b10ab80d16b6883fff8478327a49b4ba": {badAddrPorts[0], badAddrPorts[1], goodAddrPort},
+		// Valid manifest and blob.
+		"sha256:ef3a5e9aba91d942f5f888b4e855e785395387aab0f122a6e49d0eaea215e98d": {goodAddrPort},
+		"sha256:ac73670af3abed54ac6fb4695131f4099be9fbe39d6076c5d0264a6bbdae9d83": {goodAddrPort},
 	}
 	router := routing.NewMemoryRouter(resolver, netip.AddrPort{})
-	reg, err := NewRegistry(oci.NewMemory(), router, nil, nil)
+	reg, err := NewRegistry(oci.NewMemory(), router, WithRegistryFilters([]oci.Filter{oci.RegexFilter{Regex: regexp.MustCompile(`:latest$`)}}))
 	require.NoError(t, err)
+	handler := reg.Handler(logr.Discard())
 
+	//nolint: govet // Prioritize readability in tests.
 	tests := []struct {
-		expectedHeaders map[string][]string
-		name            string
-		key             string
-		expectedBody    string
-		expectedStatus  int
+		name             string
+		key              string
+		distributionKind oci.DistributionKind
+		rng              *httpx.Range
+		expectedStatus   int
+		expectedHeaders  http.Header
+		expectedBody     []byte
 	}{
 		{
-			name:            "request should timeout when no peers exists",
-			key:             "no-peers",
-			expectedStatus:  http.StatusNotFound,
-			expectedBody:    "",
-			expectedHeaders: nil,
+			name:             "request should timeout when no peers exists",
+			key:              "sha256:03ffdf45276dd38ffac79b0e9c6c14d89d9113ad783d5922580f4c66a3305591",
+			distributionKind: oci.DistributionKindBlob,
+			expectedStatus:   http.StatusNotFound,
+			expectedBody:     []byte(`{"errors":[{"code":"BLOB_UNKNOWN","detail":{"attempts":0},"message":"could not find peer for sha256:03ffdf45276dd38ffac79b0e9c6c14d89d9113ad783d5922580f4c66a3305591"}]}`),
+			expectedHeaders: http.Header{
+				httpx.HeaderContentType:   {httpx.ContentTypeJSON},
+				httpx.HeaderContentLength: {"168"},
+			},
 		},
 		{
-			name:            "request should not timeout and give 404 if all peers fail",
-			key:             "sha256:c3e30fbcf3b231356a1efbd30a8ccec75134a7a8b45217ede97f4ff483540b04",
-			expectedStatus:  http.StatusNotFound,
-			expectedBody:    "",
-			expectedHeaders: nil,
+			name:             "request should not timeout and give 404 if all peers fail",
+			key:              "sha256:18ca1296b9cc90d29b51b4a8724d97aa055102c3d74e53a8eafb3904c079c0c6",
+			distributionKind: oci.DistributionKindBlob,
+			expectedStatus:   http.StatusNotFound,
+			expectedBody:     []byte(`{"errors":[{"code":"BLOB_UNKNOWN","detail":{"attempts":3},"message":"all request retries exhausted for sha256:18ca1296b9cc90d29b51b4a8724d97aa055102c3d74e53a8eafb3904c079c0c6"}]}`),
+			expectedHeaders: http.Header{
+				httpx.HeaderContentType:   {httpx.ContentTypeJSON},
+				httpx.HeaderContentLength: {"178"},
+			},
 		},
 		{
-			name:            "request should work when first peer responds",
-			key:             "sha256:3b8a55c543ccc7ae01c47b1d35af5826a6439a9b91ab0ca96de9967759279896",
-			expectedStatus:  http.StatusOK,
-			expectedBody:    "hello world",
-			expectedHeaders: map[string][]string{"foo": {"bar"}},
+			name:             "request should work when first peer responds",
+			key:              "sha256:0b7e0ac6364af64af017531f137a95f3a5b12ea38be0e74a860004d3e5760a67",
+			distributionKind: oci.DistributionKindBlob,
+			expectedStatus:   http.StatusOK,
+			expectedBody:     []byte("first peer"),
+			expectedHeaders: http.Header{
+				httpx.HeaderAcceptRanges:  {httpx.RangeUnit},
+				httpx.HeaderContentType:   {"dummy"},
+				httpx.HeaderContentLength: {"10"},
+				oci.HeaderDockerDigest:    {"sha256:0b7e0ac6364af64af017531f137a95f3a5b12ea38be0e74a860004d3e5760a67"},
+			},
 		},
 		{
-			name:            "second peer should respond when first gives error",
-			key:             "sha256:a0daab85ec30e2809a38c32fa676515aba22f481c56fda28637ae964ff398e3d",
-			expectedStatus:  http.StatusOK,
-			expectedBody:    "hello world",
-			expectedHeaders: map[string][]string{"foo": {"bar"}},
+			name:             "second peer should respond when first gives error",
+			key:              "sha256:431491e49ba5fa61930417a46b24c03b6df0b426b90009405457741ac52f44b2",
+			distributionKind: oci.DistributionKindBlob,
+			expectedStatus:   http.StatusOK,
+			expectedBody:     []byte("second peer"),
+			expectedHeaders: http.Header{
+				httpx.HeaderAcceptRanges:  {httpx.RangeUnit},
+				httpx.HeaderContentType:   {"dummy"},
+				httpx.HeaderContentLength: {"11"},
+				oci.HeaderDockerDigest:    {"sha256:431491e49ba5fa61930417a46b24c03b6df0b426b90009405457741ac52f44b2"},
+			},
 		},
 		{
-			name:            "last peer should respond when two first fail",
-			key:             "sha256:11242d2a347bf8ab30b9f92d5ca219bbbedf95df5a8b74631194561497c1fae8",
-			expectedStatus:  http.StatusOK,
-			expectedBody:    "hello world",
-			expectedHeaders: map[string][]string{"foo": {"bar"}},
+			name:             "last peer should respond when two first fail",
+			key:              "sha256:7d66cda2ba857d07e5530e53565b7d56b10ab80d16b6883fff8478327a49b4ba",
+			distributionKind: oci.DistributionKindBlob,
+			expectedStatus:   http.StatusOK,
+			expectedBody:     []byte("last peer working"),
+			expectedHeaders: http.Header{
+				httpx.HeaderAcceptRanges:  {httpx.RangeUnit},
+				httpx.HeaderContentType:   {"dummy"},
+				httpx.HeaderContentLength: {"17"},
+				oci.HeaderDockerDigest:    {"sha256:7d66cda2ba857d07e5530e53565b7d56b10ab80d16b6883fff8478327a49b4ba"},
+			},
+		},
+		{
+			name:             "latest tag is supposed to be filtered",
+			key:              "latest",
+			distributionKind: oci.DistributionKindManifest,
+			expectedStatus:   http.StatusNotFound,
+			expectedBody:     []byte{},
+			expectedHeaders: http.Header{
+				httpx.HeaderContentLength: {"0"},
+			},
+		},
+		{
+			name:             "path is invalid and cant be parsed",
+			key:              "sha256:7d66cda2ba857d07e5530e53565b7d56b10ab80d16b6883fff8478327a49b4ba",
+			distributionKind: "invalid",
+			expectedStatus:   http.StatusNotFound,
+			expectedBody:     []byte{},
+			expectedHeaders: http.Header{
+				httpx.HeaderContentLength: {"0"},
+			},
+		},
+		{
+			name:             "manifest requested as blob should not be found",
+			key:              "sha256:ef3a5e9aba91d942f5f888b4e855e785395387aab0f122a6e49d0eaea215e98d",
+			distributionKind: oci.DistributionKindBlob,
+			expectedStatus:   http.StatusNotFound,
+			expectedBody:     []byte(`{"errors":[{"code":"BLOB_UNKNOWN","detail":{"attempts":1},"message":"could not find peer for sha256:ef3a5e9aba91d942f5f888b4e855e785395387aab0f122a6e49d0eaea215e98d"}]}`),
+			expectedHeaders: http.Header{
+				httpx.HeaderContentType:   {httpx.ContentTypeJSON},
+				httpx.HeaderContentLength: {"168"},
+			},
+		},
+		{
+			name:             "existing manifest should be found",
+			key:              "sha256:ef3a5e9aba91d942f5f888b4e855e785395387aab0f122a6e49d0eaea215e98d",
+			distributionKind: oci.DistributionKindManifest,
+			expectedStatus:   http.StatusOK,
+			expectedBody:     []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}`),
+			expectedHeaders: http.Header{
+				httpx.HeaderContentType:   {"application/vnd.oci.image.index.v1+json"},
+				httpx.HeaderContentLength: {"88"},
+				oci.HeaderDockerDigest:    {"sha256:ef3a5e9aba91d942f5f888b4e855e785395387aab0f122a6e49d0eaea215e98d"},
+			},
+		},
+		{
+			name:             "blob requested as manifest should not be found",
+			key:              "sha256:ac73670af3abed54ac6fb4695131f4099be9fbe39d6076c5d0264a6bbdae9d83",
+			distributionKind: oci.DistributionKindManifest,
+			expectedStatus:   http.StatusNotFound,
+			expectedBody:     []byte(`{"errors":[{"code":"MANIFEST_UNKNOWN","detail":{"attempts":1},"message":"could not find peer for sha256:ac73670af3abed54ac6fb4695131f4099be9fbe39d6076c5d0264a6bbdae9d83"}]}`),
+			expectedHeaders: http.Header{
+				httpx.HeaderContentType:   {httpx.ContentTypeJSON},
+				httpx.HeaderContentLength: {"172"},
+			},
+		},
+		{
+			name:             "blob request with range",
+			key:              "sha256:ac73670af3abed54ac6fb4695131f4099be9fbe39d6076c5d0264a6bbdae9d83",
+			distributionKind: oci.DistributionKindBlob,
+			rng:              &httpx.Range{Start: 1, End: 3},
+			expectedStatus:   http.StatusPartialContent,
+			expectedBody:     []byte{0x8b, 0x8, 0x0},
+			expectedHeaders: http.Header{
+				httpx.HeaderAcceptRanges:  {httpx.RangeUnit},
+				httpx.HeaderContentType:   {httpx.ContentTypeBinary},
+				httpx.HeaderContentLength: {"3"},
+				httpx.HeaderContentRange:  {"bytes 1-3/20"},
+				oci.HeaderDockerDigest:    {"sha256:ac73670af3abed54ac6fb4695131f4099be9fbe39d6076c5d0264a6bbdae9d83"},
+			},
 		},
 	}
 	for _, tt := range tests {
@@ -228,45 +354,34 @@ func TestMirrorHandler(t *testing.T) {
 			t.Run(fmt.Sprintf("%s-%s", method, tt.name), func(t *testing.T) {
 				t.Parallel()
 
-				target := fmt.Sprintf("http://example.com/v2/foo/bar/blobs/%s", tt.key)
+				target := fmt.Sprintf("http://example.com/v2/foo/bar/%s/%s?ns=docker.io", tt.distributionKind, tt.key)
 				rw := httptest.NewRecorder()
 				req := httptest.NewRequest(method, target, nil)
-				srv, err := reg.Server("")
-				require.NoError(t, err)
-				srv.Handler.ServeHTTP(rw, req)
+				if tt.rng != nil {
+					req.Header.Set(httpx.HeaderRange, tt.rng.String())
+				}
+				handler.ServeHTTP(rw, req)
 
 				resp := rw.Result()
-				defer resp.Body.Close()
+				defer httpx.DrainAndClose(resp.Body)
 				b, err := io.ReadAll(resp.Body)
 				require.NoError(t, err)
 				require.Equal(t, tt.expectedStatus, resp.StatusCode)
 
-				if method == http.MethodGet {
-					require.Equal(t, tt.expectedBody, string(b))
-				}
-				if method == http.MethodHead {
+				switch method {
+				case http.MethodGet:
+					require.Equal(t, tt.expectedBody, b)
+				case http.MethodHead:
 					require.Empty(t, b)
+				default:
+					t.FailNow()
 				}
 
 				if tt.expectedHeaders == nil {
 					require.Empty(t, resp.Header)
 				}
-				for k, v := range tt.expectedHeaders {
-					require.Equal(t, v, resp.Header.Values(k))
-				}
+				require.Equal(t, tt.expectedHeaders, resp.Header)
 			})
 		}
 	}
-}
-
-func TestCopyHeader(t *testing.T) {
-	t.Parallel()
-
-	src := http.Header{
-		"foo": []string{"2", "1"},
-	}
-	dst := http.Header{}
-	copyHeader(dst, src)
-
-	require.Equal(t, []string{"2", "1"}, dst.Values("foo"))
 }

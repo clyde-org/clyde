@@ -8,24 +8,43 @@ The below configuration must be executed on all the nodes
 5. huggingface_cli: 0.34+
 
 ## Containerd Configuration
-1. On all nodes, open /etc/containerd/config.toml
-2. Set containerd to config_path and set discard_unpacked_layers = false. See sample truncated config below. Make sure your root points to a directory with lot of space. ```Best to write a script if you have many nodes.``` 
+1. On all nodes, edit `/etc/containerd/config.toml`.
+2. Ensure **`config_path`** is set for registry certificate/mirror config (typically `/etc/containerd/certs.d`) and **`discard_unpacked_layers = false`** so unpacked layers remain on disk for Clyde. Set **`root`** to a filesystem with enough space for images. Best to automate across nodes if you have many hosts.
 
-```bash
+### Config schema version 3 (`io.containerd.cri.v1.images`)
+
+If your config starts with **`version = 3`**, use the CRI v1 images plugin keys (not `io.containerd.grpc.v1.cri`). Minimal Clyde-relevant snippet:
+
+```toml
+version = 3
+
+[plugins."io.containerd.cri.v1.images".registry]
+  config_path = "/etc/containerd/certs.d"
+[plugins."io.containerd.cri.v1.images"]
+  discard_unpacked_layers = false
+```
+
+Add your `root = "/var/lib/containerd"` (or your chosen data path) and any other required sections per upstream containerd documentation; only the plugin table names differ from version 2.
+
+### Config schema version 2 (`io.containerd.grpc.v1.cri`)
+
+Older hosts still use **`version = 2`** and the gRPC CRI plugin. Truncated example:
+
+```toml
 version = 2
 root = "/var/lib/containerd"
 
 [plugins]
-    ...
-    
+    # ... other plugins ...
+
     [plugins."io.containerd.grpc.v1.cri".containerd]
       discard_unpacked_layers = false
-      ...
-    
+
     [plugins."io.containerd.grpc.v1.cri".registry]
       config_path = "/etc/containerd/certs.d"
 ```
-3. Restart containerd and check the status to make sure it is running
+
+3. Restart containerd and confirm it is healthy (`systemctl restart containerd` / your platform equivalent).
 
 ## Additional Configuration Auto Configuration
 > You don't have to do this, it is just for information!
@@ -44,10 +63,16 @@ The quick install guide installs Clyde directly from the Clyde Helm Chart hosted
 
 > IMPORTANT: if you have changed the ```root``` of your containerd configuration to a different path, use helm --set command or -f filename.yaml to override the settings in the chart. See [here](../charts/clyde/values.yaml) for default values.
 
+### Helm chart version
+
+**Use `--version v1.5` for new installs** (matches the chart `version` / `appVersion` in the repo).
+
+Older OCI tags (for example **v1.3** or **v1.4**) may still appear in GHCR from earlier publishes. You can **ignore them in documentation and always pin `v1.5`** so clients do not pick an unintended tag. If you must remove mistaken tags from the registry, a GitHub org admin can delete specific package versions under **Packages → charts → clyde** (optional cleanup; not required if everyone pins `v1.5`).
+
 ### Installation
 ``` bash
-1. Create namespace in your k8s cluster called clyde `kubectl create namesapace clyde`
-2. Run `helm install clyde oci://ghcr.io/clyde-org/charts/clyde --version v1.1` to install clyde
+1. Create namespace in your k8s cluster called clyde `kubectl create namespace clyde`
+2. Run `helm install clyde oci://ghcr.io/clyde-org/charts/clyde --version v1.5 -n clyde` to install clyde
 3. Run `kubectl get pods -o wide -n clyde`
 ```
 
@@ -64,7 +89,8 @@ or you can use the command to override the default `pip.pipConfigPath` value
 
 ```bash
 helm install clyde oci://ghcr.io/clyde-org/charts/clyde \
-  --version v1.1 \
+  --version v1.5 \
+  -n clyde \
   --set pip.pipConfigPath=/etc/pip.conf
 ```
 
@@ -100,7 +126,7 @@ sys     0m0.016s
 Follow the same procedure for huggingface and pip. You can use `hf download model_name` and `pip install package` respectively.
 
 ### Uninstall
-helm `delete clyde -n default --no-hooks`
+`helm uninstall clyde -n clyde --no-hooks`
 
 ## Build and Install from Source
 
@@ -136,6 +162,19 @@ PACKAGES = [
     "pyspark",
 ]
 ```
+
+### Cold start (no local cache)
+
+Separate **13-node** check with a DaemonSet **image-pull** workload: **no warm cache and no seed image** on any node (one cold pull per node per run). Times are the script-reported pull duration per pod (seconds); means are over **13** pods.
+
+| Image (notes) | Approx. size | Notes | Mean pull (13 pods) |
+| --- | --- | --- | --- |
+| `tensorflow/tensorflow` | ~1 GB | Two back-to-back cold runs (upstream variance) | ~61 s, then ~85 s |
+| vLLM (Ascend, capture label) | ~5.6 GB | Baseline-style path vs Clyde **content-create** path | **~734 s → ~201 s** (~73% lower mean) |
+
+Exact tags were not pinned in the capture; treat the vLLM pair as the same approximate image size with different materialization behavior, not a strict A/B on two different digests.
+
+<img src="img/cold-start-chart.png" alt="Cold start pull time (13 nodes, no cache / no seed)" width="432" />
 
 ### Results
 These results are based on our cluster setup and the performance depends on the bandwidth to the baseline repo and the bandwidth between the nodes. However the performance improvement should be consistent if a different environment is used. 

@@ -44,7 +44,8 @@ docker push <REGISTRY>/clyde-multi:v1.0
 ```bash
 cd charts/clyde
 helm package .
-helm push clyde-v1.0.tgz  oci://ghcr.io/clyde-org/charts
+# The tarball name matches `version` in Chart.yaml (e.g. clyde-v1.5.tgz).
+helm push clyde-v1.5.tgz oci://ghcr.io/clyde-org/charts
 ```
 
 ---

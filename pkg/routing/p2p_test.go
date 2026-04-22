@@ -2,7 +2,6 @@ package routing
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -10,11 +9,15 @@ import (
 	tlog "github.com/go-logr/logr/testing"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
 	ma "github.com/multiformats/go-multiaddr"
+	manet "github.com/multiformats/go-multiaddr/net"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
+
+	"clyde/internal/option"
 )
 
 func TestP2PRouterOptions(t *testing.T) {
@@ -28,7 +31,7 @@ func TestP2PRouterOptions(t *testing.T) {
 		WithDataDir("foobar"),
 	}
 	cfg := P2PRouterConfig{}
-	err := cfg.Apply(opts...)
+	err := option.Apply(&cfg, opts...)
 	require.NoError(t, err)
 	require.Equal(t, libp2pOpts, cfg.Libp2pOpts)
 	require.Equal(t, "foobar", cfg.DataDir)
@@ -37,143 +40,127 @@ func TestP2PRouterOptions(t *testing.T) {
 func TestP2PRouter(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(t.Context())
-
-	bs := NewStaticBootstrapper(nil)
-	router, err := NewP2PRouter(ctx, "localhost:0", bs, "9090")
-	require.NoError(t, err)
-
+	log := tlog.NewTestLogger(t)
+	ctx := logr.NewContext(t.Context(), log)
+	ctx, cancel := context.WithCancel(ctx)
 	g, gCtx := errgroup.WithContext(ctx)
+
+	// Remove the 8 connection per IP limit.
+	routerOpts := []P2PRouterOption{
+		WithLibP2POptions(libp2p.ResourceManager(&network.NullResourceManager{})),
+	}
+
+	// Create primary router with no peer to bootstrap with.
+	primaryBs := NewStaticBootstrapper(nil)
+	primaryRouter, err := NewP2PRouter(t.Context(), "localhost:0", primaryBs, "9090", routerOpts...)
+	require.NoError(t, err)
 	g.Go(func() error {
-		return router.Run(gCtx)
+		return primaryRouter.Run(gCtx)
 	})
-
-	// TODO (phillebaba): There is a test flake that sometime occurs sometimes if code runs too fast.
-	// Flake results in a peer being returned without an address. Revisit in Go 1.24 to see if this can be solved better.
-	time.Sleep(1 * time.Second)
-
-	err = router.Advertise(ctx, nil)
+	ready, err := primaryRouter.Ready(t.Context())
 	require.NoError(t, err)
-	peerCh, err := router.Resolve(ctx, "foo", 1)
+	require.False(t, ready)
+	ip6Addrs, ip4Addrs := filterAndSplitAddrs(primaryRouter.host.Addrs())
+	primaryIP, err := manet.ToIP(append(ip6Addrs, ip4Addrs...)[0])
 	require.NoError(t, err)
-	peer := <-peerCh
-	require.False(t, peer.IsValid())
 
-	err = router.Advertise(ctx, []string{"foo"})
+	// Advertise and Withdraw nil keys should not error.
+	err = primaryRouter.Advertise(t.Context(), nil)
 	require.NoError(t, err)
-	peerCh, err = router.Resolve(ctx, "foo", 1)
+	err = primaryRouter.Withdraw(t.Context(), nil)
 	require.NoError(t, err)
-	peer = <-peerCh
-	require.True(t, peer.IsValid())
 
+	// Advertising while offline should not error.
+	advertisedKey := "will find key"
+	err = primaryRouter.Advertise(t.Context(), []string{advertisedKey})
+	require.NoError(t, err)
+
+	// Provider store should contain self.
+	c, err := createCid(advertisedKey)
+	require.NoError(t, err)
+	addrInfos, err := primaryRouter.kdht.FindProviders(t.Context(), c)
+	require.NoError(t, err)
+	require.Len(t, addrInfos, 1)
+	require.Equal(t, primaryRouter.host.ID(), addrInfos[0].ID)
+
+	// Lookup local key should not return self when offline.
+	bal, err := primaryRouter.Lookup(t.Context(), advertisedKey, 3)
+	require.NoError(t, err)
+	_, err = bal.Next()
+	require.ErrorIs(t, err, ErrNoNext)
+
+	// Create routers that all bootstrap with the primary router.
+	routers := []*P2PRouter{}
+	for range 30 {
+		bs := NewStaticBootstrapper([]peer.AddrInfo{*host.InfoFromHost(primaryRouter.host)})
+		r, err := NewP2PRouter(t.Context(), "localhost:0", bs, "9091", routerOpts...)
+		require.NoError(t, err)
+		g.Go(func() error {
+			return r.Run(gCtx)
+		})
+		routers = append(routers, r)
+	}
+
+	// All routers should eventually be ready as bootstrap has happened.
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		ready, err = primaryRouter.Ready(t.Context())
+		require.NoError(c, err)
+		require.True(c, ready)
+		require.Equal(c, int64(1), primaryRouter.prov.Stats().Operations.Past.KeysProvided, 1)
+	}, 5*time.Second, time.Second)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		for _, r := range routers {
+			ready, err := r.Ready(t.Context())
+			require.NoError(c, err)
+			require.True(c, ready)
+		}
+	}, 5*time.Second, time.Second)
+	require.Equal(t, 30, primaryRouter.kdht.RoutingTable().Size())
+
+	// Lookup should not return self when online.
+	bal, err = primaryRouter.Lookup(t.Context(), advertisedKey, 3)
+	require.NoError(t, err)
+	_, err = bal.Next()
+	require.ErrorIs(t, err, ErrNoNext)
+
+	// Advertised keys should be found.
+	for _, r := range routers {
+		bal, err = r.Lookup(t.Context(), advertisedKey, 3)
+		require.NoError(t, err)
+		addrPort, err := bal.Next()
+		require.NoError(t, err)
+		require.Equal(t, primaryIP.String(), addrPort.Addr().String())
+		require.Equal(t, uint16(9091), addrPort.Port())
+
+		bal, err = r.Lookup(t.Context(), "wont find key", 3)
+		require.NoError(t, err)
+		_, err = bal.Next()
+		require.ErrorIs(t, err, ErrNoNext)
+	}
+
+	// Advertise key from another router and lookup.
+	newKey := "new"
+	lastRouter := routers[len(routers)-1]
+	ip6Addrs, ip4Addrs = filterAndSplitAddrs(lastRouter.host.Addrs())
+	lastIP, err := manet.ToIP(append(ip6Addrs, ip4Addrs...)[0])
+	require.NoError(t, err)
+	err = lastRouter.Advertise(t.Context(), []string{newKey})
+	require.NoError(t, err)
+
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		require.Equal(c, int64(1), lastRouter.prov.Stats().Operations.Past.KeysProvided, 1)
+	}, 5*time.Second, 1*time.Second)
+
+	bal, err = primaryRouter.Lookup(t.Context(), newKey, 3)
+	require.NoError(t, err)
+	addrPort, err := bal.Next()
+	require.NoError(t, err)
+	require.Equal(t, lastIP.String(), addrPort.Addr().String())
+
+	// Shutdown should complete without errors.
 	cancel()
 	err = g.Wait()
 	require.NoError(t, err)
-}
-
-func TestReady(t *testing.T) {
-	t.Parallel()
-
-	bs := NewStaticBootstrapper(nil)
-	router, err := NewP2PRouter(t.Context(), "localhost:0", bs, "9090")
-	require.NoError(t, err)
-
-	// Should not be ready if no peers are found.
-	isReady, err := router.Ready(t.Context())
-	require.NoError(t, err)
-	require.False(t, isReady)
-
-	// Should be ready if only peer is host.
-	bs.SetPeers([]peer.AddrInfo{*host.InfoFromHost(router.host)})
-	isReady, err = router.Ready(t.Context())
-	require.NoError(t, err)
-	require.True(t, isReady)
-
-	// Shouldd be not ready with multiple peers but empty routing table.
-	bs.SetPeers([]peer.AddrInfo{{}, {}})
-	isReady, err = router.Ready(t.Context())
-	require.NoError(t, err)
-	require.False(t, isReady)
-
-	// Should be ready with multiple peers and populated routing table.
-	newPeer, err := router.kdht.RoutingTable().GenRandPeerID(0)
-	require.NoError(t, err)
-	ok, err := router.kdht.RoutingTable().TryAddPeer(newPeer, false, false)
-	require.NoError(t, err)
-	require.True(t, ok)
-	bs.SetPeers([]peer.AddrInfo{{}, {}})
-	isReady, err = router.Ready(t.Context())
-	require.NoError(t, err)
-	require.True(t, isReady)
-}
-
-func TestBootstrapFunc(t *testing.T) {
-	t.Parallel()
-
-	log := tlog.NewTestLogger(t)
-	ctx := logr.NewContext(t.Context(), log)
-
-	mn, err := mocknet.WithNPeers(2)
-	require.NoError(t, err)
-
-	tests := []struct {
-		name     string
-		peers    []peer.AddrInfo
-		expected []string
-	}{
-		{
-			name:     "no peers",
-			peers:    []peer.AddrInfo{},
-			expected: []string{},
-		},
-		{
-			name: "nothing missing",
-			peers: []peer.AddrInfo{
-				{
-					ID:    "foo",
-					Addrs: []ma.Multiaddr{ma.StringCast("/ip4/192.168.1.1/tcp/8080")},
-				},
-			},
-			expected: []string{"/ip4/192.168.1.1/tcp/8080/p2p/foo"},
-		},
-		{
-			name: "only self",
-			peers: []peer.AddrInfo{
-				{
-					ID:    mn.Hosts()[0].ID(),
-					Addrs: []ma.Multiaddr{ma.StringCast("/ip4/192.168.1.1/tcp/8080")},
-				},
-			},
-			expected: []string{},
-		},
-		{
-			name: "missing port",
-			peers: []peer.AddrInfo{
-				{
-					ID:    "foo",
-					Addrs: []ma.Multiaddr{ma.StringCast("/ip4/192.168.1.1")},
-				},
-			},
-			expected: []string{"/ip4/192.168.1.1/tcp/4242/p2p/foo"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			bs := NewStaticBootstrapper(tt.peers)
-			f := bootstrapFunc(ctx, bs, mn.Hosts()[0])
-			peers := f()
-
-			peerStrs := []string{}
-			for _, p := range peers {
-				id, err := p.ID.Marshal()
-				require.NoError(t, err)
-				peerStrs = append(peerStrs, fmt.Sprintf("%s/p2p/%s", p.Addrs[0].String(), string(id)))
-			}
-			require.ElementsMatch(t, tt.expected, peerStrs)
-		})
-	}
 }
 
 func TestListenMultiaddrs(t *testing.T) {
@@ -215,17 +202,6 @@ func TestListenMultiaddrs(t *testing.T) {
 	}
 }
 
-func TestIsIp6(t *testing.T) {
-	t.Parallel()
-
-	m, err := ma.NewMultiaddr("/ip6/::")
-	require.NoError(t, err)
-	require.True(t, isIp6(m))
-	m, err = ma.NewMultiaddr("/ip4/0.0.0.0")
-	require.NoError(t, err)
-	require.False(t, isIp6(m))
-}
-
 func TestCreateCid(t *testing.T) {
 	t.Parallel()
 
@@ -234,73 +210,49 @@ func TestCreateCid(t *testing.T) {
 	require.Equal(t, "bafkreigdvoh7cnza5cwzar65hfdgwpejotszfqx2ha6uuolaofgk54ge6i", c.String())
 }
 
-func TestHostMatches(t *testing.T) {
+func TestAddrsEqual(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name     string
-		host     peer.AddrInfo
-		addrInfo peer.AddrInfo
+		a        []ma.Multiaddr
+		b        []ma.Multiaddr
 		expected bool
 	}{
 		{
-			name: "ID match",
-			host: peer.AddrInfo{
-				ID:    "foo",
-				Addrs: []ma.Multiaddr{},
-			},
-			addrInfo: peer.AddrInfo{
-				ID:    "foo",
-				Addrs: []ma.Multiaddr{},
-			},
-			expected: true,
-		},
-		{
-			name: "ID do not match",
-			host: peer.AddrInfo{
-				ID:    "foo",
-				Addrs: []ma.Multiaddr{},
-			},
-			addrInfo: peer.AddrInfo{
-				ID:    "bar",
-				Addrs: []ma.Multiaddr{},
-			},
+			name:     "empty addresses",
+			a:        []ma.Multiaddr{},
+			b:        []ma.Multiaddr{},
 			expected: false,
 		},
 		{
-			name: "IP4 match",
-			host: peer.AddrInfo{
-				ID:    "",
-				Addrs: []ma.Multiaddr{ma.StringCast("/ip4/192.168.1.1")},
-			},
-			addrInfo: peer.AddrInfo{
-				ID:    "",
-				Addrs: []ma.Multiaddr{ma.StringCast("/ip4/192.168.1.1")},
-			},
+			name:     "IP4 match",
+			a:        []ma.Multiaddr{ma.StringCast("/ip4/192.168.1.1")},
+			b:        []ma.Multiaddr{ma.StringCast("/ip4/192.168.1.1")},
 			expected: true,
 		},
 		{
-			name: "IP4 do not match",
-			host: peer.AddrInfo{
-				ID:    "",
-				Addrs: []ma.Multiaddr{ma.StringCast("/ip4/192.168.1.1")},
-			},
-			addrInfo: peer.AddrInfo{
-				ID:    "",
-				Addrs: []ma.Multiaddr{ma.StringCast("/ip4/192.168.1.2")},
-			},
+			name:     "IP4 do not match",
+			a:        []ma.Multiaddr{ma.StringCast("/ip4/192.168.1.1")},
+			b:        []ma.Multiaddr{ma.StringCast("/ip4/192.168.1.2")},
 			expected: false,
 		},
 		{
 			name: "IP6 match",
-			host: peer.AddrInfo{
-				ID:    "",
-				Addrs: []ma.Multiaddr{ma.StringCast("/ip6/c3c9:152b:73d1:dad0:e2f9:a521:6356:88ba")},
+			a:    []ma.Multiaddr{ma.StringCast("/ip6/c3c9:152b:73d1:dad0:e2f9:a521:6356:88ba")},
+			b: []ma.Multiaddr{
+				ma.StringCast("/ip4/192.168.1.1"),
+				ma.StringCast("/ip6/c3c9:152b:73d1:dad0:e2f9:a521:6356:88ba"),
 			},
-			addrInfo: peer.AddrInfo{
-				ID:    "",
-				Addrs: []ma.Multiaddr{ma.StringCast("/ip6/c3c9:152b:73d1:dad0:e2f9:a521:6356:88ba")},
+			expected: true,
+		},
+		{
+			name: "non IP address",
+			a: []ma.Multiaddr{
+				ma.StringCast("/tcp/5000"),
+				ma.StringCast("/ip4/192.168.1.1"),
 			},
+			b:        []ma.Multiaddr{ma.StringCast("/ip4/192.168.1.1")},
 			expected: true,
 		},
 	}
@@ -308,8 +260,7 @@ func TestHostMatches(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			matches, err := hostMatches(tt.host, tt.addrInfo)
-			require.NoError(t, err)
+			matches := addrsEqual(tt.a, tt.b)
 			require.Equal(t, tt.expected, matches)
 		})
 	}
@@ -331,4 +282,28 @@ func TestLoadOrCreatePrivateKey(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.True(t, firstPrivKey.Equals(secondPrivKey))
+}
+
+func TestListPeers(t *testing.T) {
+	t.Parallel()
+
+	isolatedBs := NewStaticBootstrapper(nil)
+	isolatedRouter, err := NewP2PRouter(t.Context(), "localhost:0", isolatedBs, "9090")
+	require.NoError(t, err)
+
+	isolatedAddrs, err := isolatedRouter.ListPeers()
+	require.NoError(t, err)
+	require.Empty(t, isolatedAddrs)
+	require.NotNil(t, isolatedAddrs)
+}
+
+func TestLocalAddress(t *testing.T) {
+	t.Parallel()
+
+	bs := NewStaticBootstrapper(nil)
+	router, err := NewP2PRouter(t.Context(), ":0", bs, "9090")
+	require.NoError(t, err)
+
+	localAddrs := router.LocalAddresses()
+	require.NotEmpty(t, localAddrs, "LocalAddress should return a non-empty address")
 }

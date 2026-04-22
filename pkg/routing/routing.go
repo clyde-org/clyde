@@ -2,15 +2,16 @@ package routing
 
 import (
 	"context"
-	"net/netip"
 )
 
 // Router implements the discovery of content.
 type Router interface {
 	// Ready returns true when the router is ready.
 	Ready(ctx context.Context) (bool, error)
-	// Resolve asynchronously discovers addresses that can serve the content defined by the give key.
-	Resolve(ctx context.Context, key string, count int) (<-chan netip.AddrPort, error)
-	// Advertise broadcasts that the current router can serve the content.
+	// Lookup discovers peers with the given key and returns a balancer with the peers.
+	Lookup(ctx context.Context, key string, count int) (Balancer, error)
+	// Advertise broadcasts the availability of the given keys.
 	Advertise(ctx context.Context, keys []string) error
+	// Withdraw stops the broadcasting the availability of the given keys to the network.
+	Withdraw(ctx context.Context, keys []string) error
 }

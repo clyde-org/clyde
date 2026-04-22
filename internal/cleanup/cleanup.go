@@ -3,8 +3,6 @@ package cleanup
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -14,6 +12,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"clyde/internal/channel"
+	"clyde/pkg/httpx"
 	"clyde/pkg/oci"
 )
 
@@ -28,7 +27,7 @@ func Run(ctx context.Context, addr, configPath string) error {
 	g, gCtx := errgroup.WithContext(ctx)
 
 	mux := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		if req.Method != http.MethodGet && req.URL.Path != "/healthz" {
+		if req.Method != http.MethodGet && req.URL.Path != "/readyz" {
 			log.Error(errors.New("unknown request"), "unsupported probe request", "path", req.URL.Path, "method", req.Method)
 			rw.WriteHeader(http.StatusNotFound)
 			return
@@ -63,7 +62,7 @@ func Run(ctx context.Context, addr, configPath string) error {
 func Wait(ctx context.Context, probeEndpoint string, period time.Duration, threshold int) error {
 	log := logr.FromContextOrDiscard(ctx)
 	resolver := &net.Resolver{}
-	client := &http.Client{}
+	httpClient := httpx.BaseClient()
 
 	addr, port, err := net.SplitHostPort(probeEndpoint)
 	if err != nil {
@@ -93,7 +92,7 @@ func Wait(ctx context.Context, probeEndpoint string, period time.Duration, thres
 			}
 
 			log.Info("running probe request", "endpoints", len(ips))
-			err = probeIPs(ctx, client, ips, port)
+			err = probeIPs(ctx, httpClient, ips, port)
 			if err != nil {
 				log.Error(err, "cleanup probe request failed")
 				thresholdCount = 0
@@ -118,7 +117,7 @@ func probeIPs(ctx context.Context, client *http.Client, ips []net.IPAddr, port s
 			u := url.URL{
 				Scheme: "http",
 				Host:   net.JoinHostPort(ip.String(), port),
-				Path:   "/healthz",
+				Path:   "/readyz",
 			}
 			reqCtx, cancel := context.WithTimeout(gCtx, 1*time.Second)
 			defer cancel()
@@ -130,13 +129,10 @@ func probeIPs(ctx context.Context, client *http.Client, ips []net.IPAddr, port s
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
-			_, err = io.Copy(io.Discard, resp.Body)
+			defer httpx.DrainAndClose(resp.Body)
+			err = httpx.CheckResponseStatus(resp, http.StatusOK)
 			if err != nil {
 				return err
-			}
-			if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("unexpected status code %s", resp.Status)
 			}
 			return nil
 		})

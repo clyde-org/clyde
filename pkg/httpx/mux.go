@@ -1,8 +1,10 @@
-package mux
+package httpx
 
 import (
+	"errors"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -25,14 +27,29 @@ func NewServeMux(log logr.Logger) *ServeMux {
 }
 
 func (s *ServeMux) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	s.mux.ServeHTTP(rw, req)
+	h, pattern := s.mux.Handler(req)
+	if pattern == "" {
+		kvs := []any{
+			"path", req.URL.Path,
+			"status", http.StatusNotFound,
+			"method", req.Method,
+			"ip", GetClientIP(req),
+		}
+		s.log.Error(errors.New("page not found"), "", kvs...)
+		rw.WriteHeader(http.StatusNotFound)
+		return
+	}
+	h.ServeHTTP(rw, req)
 }
 
 func (s *ServeMux) Handle(pattern string, handler HandlerFunc) {
 	metricsPath := metricsFriendlyPath(pattern)
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, req *http.Request) {
 		start := time.Now()
-		rw := &response{ResponseWriter: w}
+		rw := &response{
+			ResponseWriter: w,
+			method:         req.Method,
+		}
 		defer func() {
 			latency := time.Since(start)
 			statusCode := strconv.FormatInt(int64(rw.Status()), 10)
@@ -41,37 +58,37 @@ func (s *ServeMux) Handle(pattern string, handler HandlerFunc) {
 			HttpRequestDurHistogram.WithLabelValues(metricsPath, req.Method, statusCode).Observe(latency.Seconds())
 			HttpResponseSizeHistogram.WithLabelValues(metricsPath, req.Method, statusCode).Observe(float64(rw.Size()))
 
-			// Ignore logging requests to healthz to reduce log noise
-			if req.URL.Path == "/healthz" {
+			// Ignore logging requests to readyz and livez to reduce log noise
+			if slices.Contains([]string{"/readyz", "/livez"}, req.URL.Path) {
 				return
 			}
 
-			kvs := []any{
-				"path", req.URL.Path,
-				"status", rw.Status(),
-				"method", req.Method,
-				"latency", latency.String(),
-				"ip", GetClientIP(req),
-				"handler", rw.handler,
-			}
-
-			// Improved logging: distinguish success, redirect, and errors
-			switch {
-			case rw.Status() >= 200 && rw.Status() < 300:
-				s.log.Info("success", kvs...)
-			case rw.Status() >= 300 && rw.Status() < 400:
-				s.log.Info("redirect", kvs...)
-			default:
-				s.log.Error(rw.Error(), "request failed", kvs...)
+			if s.log.V(1).Enabled() {
+				kvs := []any{
+					"path", req.URL.Path,
+					"status", rw.Status(),
+					"method", req.Method,
+					"latency", latency.String(),
+					"ip", GetClientIP(req),
+				}
+				for k, v := range rw.attrs {
+					kvs = append(kvs, k, v)
+				}
+				if rw.Status() >= 200 && rw.Status() < 400 {
+					s.log.Info("", kvs...)
+				} else {
+					s.log.Error(rw.Error(), "", kvs...)
+				}
 			}
 		}()
 		HttpRequestsInflight.WithLabelValues(metricsPath).Add(1)
-		handler(rw, req)
+		ctx := logr.NewContext(req.Context(), s.log)
+		handler(rw, req.WithContext(ctx))
 	})
 }
 
 func GetClientIP(req *http.Request) string {
-	forwardedFor := req.Header.Get("X-Forwarded-For")
+	forwardedFor := req.Header.Get(HeaderXForwardedFor)
 	if forwardedFor != "" {
 		comps := strings.Split(forwardedFor, ",")
 		if len(comps) > 1 {

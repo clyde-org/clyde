@@ -1,7 +1,8 @@
-package mux
+package httpx
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,21 +32,13 @@ func TestResponseWriter(t *testing.T) {
 		ResponseWriter: httptest.NewRecorder(),
 	}
 	rw.WriteHeader(http.StatusNotFound)
-	require.True(t, rw.writtenHeader)
+	require.True(t, rw.wroteHeader)
 	require.Equal(t, http.StatusNotFound, rw.Status())
 	rw.WriteHeader(http.StatusBadGateway)
 	require.Equal(t, http.StatusNotFound, rw.Status())
 	_, err := rw.Write([]byte("foo"))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusNotFound, rw.Status())
-
-	rw = &response{
-		ResponseWriter: httptest.NewRecorder(),
-	}
-	err = errors.New("some server error")
-	rw.WriteError(http.StatusInternalServerError, err)
-	require.Equal(t, err, rw.Error())
-	require.Equal(t, http.StatusInternalServerError, rw.Status())
 
 	rw = &response{
 		ResponseWriter: httptest.NewRecorder(),
@@ -70,4 +63,56 @@ func TestResponseWriter(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, r.Size(), readFromN)
 	require.Equal(t, r.Size(), rw.Size())
+
+	rw = &response{
+		ResponseWriter: httptest.NewRecorder(),
+	}
+	rw.SetAttrs("foo", "bar")
+	require.Equal(t, map[string]any{"foo": "bar"}, rw.attrs)
+}
+
+func TestResponseWriterError(t *testing.T) {
+	t.Parallel()
+
+	//nolint: govet // Prioritize readability in tests.
+	tests := []struct {
+		err             error
+		expectedBody    string
+		expectedHeaders http.Header
+	}{
+		{
+			err: errors.New("some server error"),
+			expectedHeaders: http.Header{
+				HeaderContentLength: {"0"},
+			},
+		},
+		{
+			err:          NewBasicResponseError("Hello World"),
+			expectedBody: "Hello World",
+			expectedHeaders: http.Header{
+				HeaderContentType:   {ContentTypeText},
+				HeaderContentLength: {"11"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			t.Run(fmt.Sprintf("%s - %s", method, tt.err.Error()), func(t *testing.T) {
+				t.Parallel()
+
+				rec := httptest.NewRecorder()
+				rw := &response{
+					ResponseWriter: rec,
+					method:         method,
+				}
+				rw.WriteError(http.StatusInternalServerError, tt.err)
+				require.Equal(t, tt.err, rw.Error())
+				require.Equal(t, http.StatusInternalServerError, rw.Status())
+				require.Equal(t, tt.expectedHeaders, rec.Header())
+				if method != http.MethodHead {
+					require.Equal(t, tt.expectedBody, rec.Body.String())
+				}
+			})
+		}
+	}
 }

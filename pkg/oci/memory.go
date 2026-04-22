@@ -6,40 +6,27 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync/atomic"
+	"sync"
 
 	"github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
-var _ Client = &Memory{}
-
-type AtomicLock struct {
-	state int32 // 0: unlocked, 1: locked
-}
+var _ Store = &Memory{}
 
 type Memory struct {
+	descs  map[digest.Digest]ocispec.Descriptor
 	blobs  map[digest.Digest][]byte
 	tags   map[string]digest.Digest
 	images []Image
-	lock   AtomicLock
-}
-
-func (l *AtomicLock) Lock() {
-	for !atomic.CompareAndSwapInt32(&l.state, 0, 1) {
-		// If the state is 0 (unlocked), try to change it to 1 (locked)
-		// Otherwise, keep spinning until it succeeds (busy-waiting)
-	}
-}
-
-func (l *AtomicLock) Unlock() {
-	// Set the state back to 0 (unlocked)
-	atomic.StoreInt32(&l.state, 0)
+	mx     sync.RWMutex
 }
 
 func NewMemory() *Memory {
 	return &Memory{
 		images: []Image{},
 		tags:   map[string]digest.Digest{},
+		descs:  map[digest.Digest]ocispec.Descriptor{},
 		blobs:  map[digest.Digest][]byte{},
 	}
 }
@@ -48,24 +35,31 @@ func (m *Memory) Name() string {
 	return "memory"
 }
 
-func (m *Memory) Verify(ctx context.Context) error {
-	return nil
-}
-
-func (m *Memory) Subscribe(ctx context.Context) (<-chan ImageEvent, <-chan error, error) {
-	return nil, nil, nil
+func (m *Memory) Subscribe(ctx context.Context) (<-chan OCIEvent, error) {
+	return nil, nil
 }
 
 func (m *Memory) ListImages(ctx context.Context) ([]Image, error) {
-	m.lock.Lock()
-	defer m.lock.Unlock()
+	m.mx.RLock()
+	defer m.mx.RUnlock()
 
 	return m.images, nil
 }
 
+func (m *Memory) ListContent(ctx context.Context) ([][]Reference, error) {
+	m.mx.RLock()
+	defer m.mx.RUnlock()
+
+	contents := [][]Reference{}
+	for k := range m.blobs {
+		contents = append(contents, []Reference{{Digest: k}})
+	}
+	return contents, nil
+}
+
 func (m *Memory) Resolve(ctx context.Context, ref string) (digest.Digest, error) {
-	m.lock.Lock()
-	defer m.lock.Unlock()
+	m.mx.RLock()
+	defer m.mx.RUnlock()
 
 	dgst, ok := m.tags[ref]
 	if !ok {
@@ -74,35 +68,20 @@ func (m *Memory) Resolve(ctx context.Context, ref string) (digest.Digest, error)
 	return dgst, nil
 }
 
-func (m *Memory) Size(ctx context.Context, dgst digest.Digest) (int64, error) {
-	m.lock.Lock()
-	defer m.lock.Unlock()
+func (m *Memory) Descriptor(ctx context.Context, dgst digest.Digest) (ocispec.Descriptor, error) {
+	m.mx.RLock()
+	defer m.mx.RUnlock()
 
-	b, ok := m.blobs[dgst]
+	desc, ok := m.descs[dgst]
 	if !ok {
-		return 0, errors.Join(ErrNotFound, fmt.Errorf("size information for digest %s not found", dgst))
+		return ocispec.Descriptor{}, errors.Join(ErrNotFound, fmt.Errorf("size information for digest %s not found", dgst))
 	}
-	return int64(len(b)), nil
+	return desc, nil
 }
 
-func (m *Memory) GetManifest(ctx context.Context, dgst digest.Digest) ([]byte, string, error) {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	b, ok := m.blobs[dgst]
-	if !ok {
-		return nil, "", errors.Join(ErrNotFound, fmt.Errorf("manifest with digest %s not found", dgst))
-	}
-	mt, err := DetermineMediaType(b)
-	if err != nil {
-		return nil, "", err
-	}
-	return b, mt, nil
-}
-
-func (m *Memory) GetBlob(ctx context.Context, dgst digest.Digest) (io.ReadSeekCloser, error) {
-	m.lock.Lock()
-	defer m.lock.Unlock()
+func (m *Memory) Open(ctx context.Context, dgst digest.Digest) (io.ReadSeekCloser, error) {
+	m.mx.RLock()
+	defer m.mx.RUnlock()
 
 	b, ok := m.blobs[dgst]
 	if !ok {
@@ -119,8 +98,8 @@ func (m *Memory) GetBlob(ctx context.Context, dgst digest.Digest) (io.ReadSeekCl
 }
 
 func (m *Memory) AddImage(img Image) {
-	m.lock.Lock()
-	defer m.lock.Unlock()
+	m.mx.Lock()
+	defer m.mx.Unlock()
 
 	m.images = append(m.images, img)
 	tagName, ok := img.TagName()
@@ -130,9 +109,24 @@ func (m *Memory) AddImage(img Image) {
 	m.tags[tagName] = img.Digest
 }
 
-func (m *Memory) AddBlob(b []byte, dgst digest.Digest) {
-	m.lock.Lock()
-	defer m.lock.Unlock()
+func (m *Memory) Write(desc ocispec.Descriptor, b []byte) error {
+	m.mx.Lock()
+	defer m.mx.Unlock()
 
-	m.blobs[dgst] = b
+	if desc.Size == 0 {
+		desc.Size = int64(len(b))
+	}
+	if desc.Size != int64(len(b)) {
+		return errors.New("descriptor size and byte size do not match")
+	}
+	if desc.Digest == "" {
+		return errors.New("digest cannot be empty")
+	}
+	if desc.MediaType == "" {
+		return errors.New("media type cannot be empty")
+	}
+
+	m.descs[desc.Digest] = desc
+	m.blobs[desc.Digest] = b
+	return nil
 }
