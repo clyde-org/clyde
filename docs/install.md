@@ -65,14 +65,12 @@ The quick install guide installs Clyde directly from the Clyde Helm Chart hosted
 
 ### Helm chart version
 
-**Use `--version v1.5` for new installs** (matches the chart `version` / `appVersion` in the repo).
-
-Older OCI tags (for example **v1.3** or **v1.4**) may still appear in GHCR from earlier publishes. You can **ignore them in documentation and always pin `v1.5`** so clients do not pick an unintended tag. If you must remove mistaken tags from the registry, a GitHub org admin can delete specific package versions under **Packages → charts → clyde** (optional cleanup; not required if everyone pins `v1.5`).
+**Use `--version v1.4` for new installs** (matches the chart `version` / `appVersion` in the repo).
 
 ### Installation
 ``` bash
 1. Create namespace in your k8s cluster called clyde `kubectl create namespace clyde`
-2. Run `helm install clyde oci://ghcr.io/clyde-org/charts/clyde --version v1.5 -n clyde` to install clyde
+2. Run `helm install clyde oci://ghcr.io/clyde-org/charts/clyde --version v1.4 -n clyde` to install clyde
 3. Run `kubectl get pods -o wide -n clyde`
 ```
 
@@ -89,7 +87,7 @@ or you can use the command to override the default `pip.pipConfigPath` value
 
 ```bash
 helm install clyde oci://ghcr.io/clyde-org/charts/clyde \
-  --version v1.5 \
+  --version v1.4 \
   -n clyde \
   --set pip.pipConfigPath=/etc/pip.conf
 ```

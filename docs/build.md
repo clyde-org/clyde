@@ -33,8 +33,8 @@ make build
 sudo make build-image
 
 # Tag and push (replace with actual registry and version)
-docker tag clyde:<commit-sha> <REGISTRY>/clyde:v1.0
-docker push <REGISTRY>/clyde-multi:v1.0
+docker tag clyde:<commit-sha> <REGISTRY>/clyde-multi:v1.4
+docker push <REGISTRY>/clyde-multi:v1.4
 ```
 
 > This will produce multi-arch binaries under `dist/` and a single multi-architecture container image that supports both AMD64 and ARM64.
@@ -44,8 +44,8 @@ docker push <REGISTRY>/clyde-multi:v1.0
 ```bash
 cd charts/clyde
 helm package .
-# The tarball name matches `version` in Chart.yaml (e.g. clyde-v1.5.tgz).
-helm push clyde-v1.5.tgz oci://ghcr.io/clyde-org/charts
+# The tarball name matches `version` in Chart.yaml (e.g. clyde-v1.4.tgz).
+helm push clyde-v1.4.tgz oci://ghcr.io/clyde-org/charts
 ```
 
 ---
